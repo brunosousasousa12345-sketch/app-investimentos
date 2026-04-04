@@ -7,64 +7,37 @@ import sqlite3
 st.set_page_config(page_title="Investidor PRO", layout="wide")
 
 # =========================
-# 🗄️ BANCO DE DADOS
+# 🗄️ BANCO
 # =========================
 conn = sqlite3.connect("banco.db", check_same_thread=False)
 cursor = conn.cursor()
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS usuarios (
-    username TEXT,
-    password TEXT
-)
-""")
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS carteira (
-    username TEXT,
-    ticker TEXT,
-    valor REAL
-)
-""")
-
+cursor.execute("""CREATE TABLE IF NOT EXISTS usuarios (user TEXT, senha TEXT)""")
+cursor.execute("""CREATE TABLE IF NOT EXISTS carteira (user TEXT, ticker TEXT, valor REAL)""")
 conn.commit()
 
 # =========================
 # 🔐 FUNÇÕES
 # =========================
-def cadastrar(user, senha):
-    cursor.execute("INSERT INTO usuarios VALUES (?, ?)", (user, senha))
+def cadastrar(u, s):
+    cursor.execute("INSERT INTO usuarios VALUES (?, ?)", (u, s))
     conn.commit()
 
-def login(user, senha):
-    cursor.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (user, senha))
+def login(u, s):
+    cursor.execute("SELECT * FROM usuarios WHERE user=? AND senha=?", (u, s))
     return cursor.fetchone()
 
-def salvar_ativo(user, ticker, valor):
-    cursor.execute("INSERT INTO carteira VALUES (?, ?, ?)", (user, ticker, valor))
+def add_ativo(u, t, v):
+    cursor.execute("INSERT INTO carteira VALUES (?, ?, ?)", (u, t, v))
     conn.commit()
 
-def carregar_carteira(user):
-    cursor.execute("SELECT ticker, valor FROM carteira WHERE username=?", (user,))
+def get_carteira(u):
+    cursor.execute("SELECT ticker, valor FROM carteira WHERE user=?", (u,))
     return cursor.fetchall()
 
-def limpar_carteira(user):
-    cursor.execute("DELETE FROM carteira WHERE username=?", (user,))
+def limpar(u):
+    cursor.execute("DELETE FROM carteira WHERE user=?", (u,))
     conn.commit()
-
-# =========================
-# 🎨 VISUAL
-# =========================
-st.markdown("""
-<style>
-body { background-color: #0E1117; }
-div[data-testid="stMetric"] {
-    background-color: #1E222A;
-    padding: 15px;
-    border-radius: 10px;
-}
-</style>
-""", unsafe_allow_html=True)
 
 # =========================
 # 🔐 LOGIN
@@ -73,35 +46,32 @@ if "logado" not in st.session_state:
     st.session_state.logado = False
 
 if not st.session_state.logado:
-    st.title("🔐 Login - Investidor PRO")
+    st.title("🔐 Login")
 
-    aba_login, aba_cadastro = st.tabs(["Entrar", "Cadastrar"])
+    aba1, aba2 = st.tabs(["Entrar", "Cadastrar"])
 
-    with aba_login:
-        user = st.text_input("Usuário")
-        senha = st.text_input("Senha", type="password")
-
+    with aba1:
+        u = st.text_input("Usuário")
+        s = st.text_input("Senha", type="password")
         if st.button("Entrar"):
-            if login(user, senha):
+            if login(u, s):
                 st.session_state.logado = True
-                st.session_state.user = user
-                st.success("Login realizado!")
+                st.session_state.user = u
                 st.rerun()
             else:
-                st.error("Usuário ou senha inválidos")
+                st.error("Erro no login")
 
-    with aba_cadastro:
-        new_user = st.text_input("Novo usuário")
-        new_pass = st.text_input("Nova senha", type="password")
-
+    with aba2:
+        nu = st.text_input("Novo usuário")
+        ns = st.text_input("Nova senha", type="password")
         if st.button("Cadastrar"):
-            cadastrar(new_user, new_pass)
-            st.success("Cadastro realizado!")
+            cadastrar(nu, ns)
+            st.success("Cadastrado!")
 
     st.stop()
 
 # =========================
-# 🚪 LOGADO
+# 🚪 APP
 # =========================
 st.title(f"📈 Investidor PRO | {st.session_state.user}")
 
@@ -116,7 +86,7 @@ if not ticker.endswith(".SA"):
 aba1, aba2, aba3 = st.tabs(["📊 Análise", "💼 Carteira", "💰 Dividendos"])
 
 # =========================
-# 📊 ANÁLISE
+# 📊 ANÁLISE (AÇÃO + FII)
 # =========================
 with aba1:
     try:
@@ -125,27 +95,79 @@ with aba1:
         info = acao.info or {}
 
         preco = hist['Close'].iloc[-1] if not hist.empty else 0
-        roe = (info.get('returnOnEquity') or 0) * 100
+        tipo = info.get("quoteType", "")
 
-        dy_raw = info.get('dividendYield')
+        st.subheader("📊 Dados")
+
+        dy_raw = info.get("dividendYield")
         dy = dy_raw * 100 if dy_raw and dy_raw < 1 else dy_raw or 0
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Preço", f"R$ {preco:.2f}")
-        c2.metric("DY", f"{dy:.2f}%")
-        c3.metric("ROE", f"{roe:.2f}%")
+        score = 0
 
+        if tipo == "EQUITY":
+            st.write("📈 Ação")
+
+            roe = (info.get("returnOnEquity") or 0) * 100
+            pl = info.get("trailingPE") or 0
+            divida = info.get("debtToEquity") or 0
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Preço", f"R$ {preco:.2f}")
+            c2.metric("DY", f"{dy:.2f}%")
+            c3.metric("ROE", f"{roe:.2f}%")
+            c4.metric("P/L", f"{pl:.2f}")
+
+            if roe > 20: score += 2
+            elif roe > 10: score += 1
+
+            if dy > 8: score += 2
+            elif dy > 4: score += 1
+
+            if divida < 0.5: score += 2
+            elif divida < 1: score += 1
+
+        else:
+            st.write("🏢 Fundo Imobiliário")
+
+            pvp = info.get("priceToBook") or 0
+            div_mensal = (preco * (dy / 100)) / 12 if dy > 0 else 0
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Preço", f"R$ {preco:.2f}")
+            c2.metric("DY", f"{dy:.2f}%")
+            c3.metric("P/VP", f"{pvp:.2f}")
+            c4.metric("Div/Mês", f"R$ {div_mensal:.2f}")
+
+            if dy > 10: score += 2
+            elif dy > 7: score += 1
+
+            if 0.8 < pvp < 1.2:
+                score += 2
+            elif pvp < 0.8:
+                score += 1
+
+        # GRÁFICO
         fig = px.line(hist, x=hist.index, y="Close")
         st.plotly_chart(fig, use_container_width=True)
 
+        # RESULTADO FINAL
+        st.subheader("🧠 Avaliação")
+
+        if score >= 5:
+            st.success("🟢 BOA | 💰 APORTAR")
+        elif score >= 3:
+            st.warning("🟡 MÉDIA | 🤔 ANALISAR")
+        else:
+            st.error("🔴 FRACA | ❌ NÃO APORTAR")
+
     except:
-        st.error("Erro ao carregar dados")
+        st.error("Erro ao carregar")
 
 # =========================
 # 💼 CARTEIRA
 # =========================
 with aba2:
-    st.subheader("💼 Minha Carteira")
+    st.subheader("💼 Carteira")
 
     col1, col2, col3 = st.columns(3)
 
@@ -153,72 +175,48 @@ with aba2:
         novo = st.text_input("Ticker").upper()
 
     with col2:
-        valor = st.number_input("Valor investido", min_value=0.0)
+        valor = st.number_input("Valor", min_value=0.0)
 
     with col3:
         if st.button("Adicionar"):
-            salvar_ativo(st.session_state.user, novo, valor)
-            st.success("Adicionado!")
+            add_ativo(st.session_state.user, novo, valor)
+            st.success("Adicionado")
 
-    carteira = carregar_carteira(st.session_state.user)
+    carteira = get_carteira(st.session_state.user)
 
-    total_investido = 0
-    total_atual = 0
+    total_i = 0
+    total_a = 0
     dados = []
 
-    for t, valor in carteira:
+    for t, v in carteira:
         if not t.endswith(".SA"):
             t += ".SA"
 
-        acao = yf.Ticker(t)
-        hist = acao.history(period="1d")
-
+        hist = yf.Ticker(t).history(period="1d")
         preco = hist['Close'].iloc[-1] if not hist.empty else 0
 
-        cotas = valor / preco if preco > 0 else 0
-        atual = cotas * preco
-        lucro = atual - valor
+        atual = v
+        lucro = atual - v
 
-        total_investido += valor
-        total_atual += atual
+        total_i += v
+        total_a += atual
 
-        dados.append({
-            "Ticker": t,
-            "Investido": valor,
-            "Atual": atual,
-            "Lucro": lucro
-        })
+        dados.append({"Ticker": t, "Investido": v, "Atual": atual, "Lucro": lucro})
 
     if dados:
         df = pd.DataFrame(dados)
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df)
 
-        lucro_total = total_atual - total_investido
+        lucro_total = total_a - total_i
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Investido", f"R$ {total_investido:.2f}")
-        c2.metric("Atual", f"R$ {total_atual:.2f}")
-        c3.metric("Lucro", f"R$ {lucro_total:.2f}")
+        c1.metric("Investido", f"{total_i:.2f}")
+        c2.metric("Atual", f"{total_a:.2f}")
+        c3.metric("Lucro", f"{lucro_total:.2f}")
 
-        # GRÁFICO
-        df_total = pd.DataFrame()
-
-        for t, _ in carteira:
-            if not t.endswith(".SA"):
-                t += ".SA"
-
-            hist = yf.Ticker(t).history(period="1y")['Close']
-            if not hist.empty:
-                df_total[t] = hist
-
-        if not df_total.empty:
-            df_total["Total"] = df_total.sum(axis=1)
-            fig = px.line(df_total, x=df_total.index, y="Total")
-            st.plotly_chart(fig, use_container_width=True)
-
-    if st.button("🗑️ Limpar Carteira"):
-        limpar_carteira(st.session_state.user)
-        st.warning("Carteira apagada!")
+    if st.button("Limpar Carteira"):
+        limpar(st.session_state.user)
+        st.warning("Carteira limpa")
 
 # =========================
 # 💰 DIVIDENDOS
@@ -226,20 +224,20 @@ with aba2:
 with aba3:
     st.subheader("💰 Dividendos")
 
-    carteira = carregar_carteira(st.session_state.user)
+    carteira = get_carteira(st.session_state.user)
     total = 0
 
-    for t, valor in carteira:
+    for t, v in carteira:
         if not t.endswith(".SA"):
             t += ".SA"
 
         info = yf.Ticker(t).info or {}
         dy_raw = info.get("dividendYield")
 
-        dy = dy_raw if dy_raw and dy_raw < 1 else (dy_raw or 0) / 100
-        dividendos = valor * dy
+        dy = dy_raw if dy_raw and dy_raw < 1 else (dy_raw or 0)/100
+        div = v * dy
 
-        total += dividendos
-        st.write(f"{t}: R$ {dividendos:.2f}/ano")
+        total += div
+        st.write(f"{t}: R$ {div:.2f}/ano")
 
-    st.success(f"Total anual: R$ {total:.2f}")
+    st.success(f"Total: R$ {total:.2f}")

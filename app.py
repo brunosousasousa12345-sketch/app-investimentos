@@ -63,26 +63,31 @@ def get_data(ticker):
     return info, hist
 
 @st.cache_data(ttl=1800)
-def calcular_indicadores(info, preco, ticker):
-    try:
-        dy = (info.get("dividendYield") or 0) * 100
-        roe = (info.get("returnOnEquity") or 0) * 100
-        pl = info.get("trailingPE") or 0
-        pvp = preco / (info.get("bookValue") or 1)
-        divida = info.get("debtToEquity") or 0
-        setor = info.get("sector") or "N/A"
-        nome = info.get("longName") or ticker
-    except:
-        dy, roe, pl, pvp, divida, setor, nome = 0,0,0,0,0,"N/A",ticker
+def get_data(ticker):
+    ticker = ticker.upper().strip()
 
-    return {
-        "DY": dy,
-        "ROE": roe,
-        "P/L": pl,
-        "P/VP": pvp,
-        "Dívida": divida,
-        "Setor": setor,
-        "Nome": nome
+    # Corrige automaticamente Brasil
+    if "." not in ticker and len(ticker) <= 6:
+        ticker += ".SA"
+
+    acao = yf.Ticker(ticker)
+
+    try:
+        hist = acao.history(period="3mo")
+
+        if hist.empty:
+            return None, None
+
+        # usa info completo (mais seguro)
+        try:
+            info = acao.info
+        except:
+            info = {}
+
+        return info, hist
+
+    except:
+        return None, None
     }
 
 def score_ativo(ind):

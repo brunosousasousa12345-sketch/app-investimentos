@@ -2,81 +2,136 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-# 1. CONFIGURAÇÃO VISUAL PROFISSIONAL
-st.set_page_config(page_title="Investidor PRO", layout="wide")
+# ==============================
+# 1. CONFIGURAÇÃO DE INTERFACE (UI)
+# ==============================
+st.set_page_config(page_title="Investidor PRO | Universal", layout="wide", page_icon="📈")
 
+# Estilização CSS para cartões e métricas
 st.markdown("""
     <style>
-    .stMetric { background-color: #f0f2f6; padding: 20px; border-radius: 10px; }
-    .main-title { text-align: center; color: #1E3A8A; font-weight: bold; }
+    .main { background-color: #f8f9fa; }
+    div[data-testid="stMetricValue"] { font-size: 24px; color: #1E3A8A; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e0e0e0; }
+    .status-box { padding: 20px; border-radius: 10px; text-align: center; font-weight: bold; margin-bottom: 20px; }
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1 class='main-title'>🚀 Investidor PRO Universal</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align:center;'>🚀 Investidor PRO</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;'>Análise Universal de Ações e FIIs</p>", unsafe_allow_html=True)
 
-# 2. FUNÇÃO DE BUSCA CORRIGIDA
+# ==============================
+# 2. MOTOR DE BUSCA E TRATAMENTO DE DADOS
+# ==============================
 @st.cache_data(ttl=600)
-def buscar_dados_completos(ticker_input):
+def buscar_ativo_universal(ticker_input):
     ticker = ticker_input.upper().strip()
-    # Tenta B3 primeiro, depois Global
-    for t in [f"{ticker}.SA", ticker]:
+    # Tenta B3 primeiro (.SA), depois Global
+    tentativas = [f"{ticker}.SA", ticker]
+    
+    for t in tentativas:
         try:
-            obj = yf.Ticker(t)
-            hist = obj.history(period="1y")
+            ativo = yf.Ticker(t)
+            hist = ativo.history(period="1y")
             if not hist.empty:
-                return obj.info, hist, t
+                # Retorna info, histórico e o ticker que funcionou
+                return ativo.info, hist, t
         except:
             continue
     return None, None, None
 
-# 3. INTERFACE DE BUSCA
-busca = st.text_input("Digite o Ticker (Ex: MXRF11, PETR4, AAPL):", "MXRF11")
+def extrair_metricas(info, preco, ticker_final):
+    # O Yahoo Finance muda as chaves entre Ações e FIIs. Esta lógica padroniza:
+    dados = {
+        "nome": info.get('longName', ticker_final),
+        "setor": info.get('sector') or info.get('industry') or "Fundo Imobiliário / Internacional",
+        "moeda": info.get('currency', 'BRL'),
+        # Busca Dividend Yield em múltiplas chaves possíveis
+        "dy": (info.get('dividendYield') or info.get('yield') or info.get('trailingAnnualDividendYield') or 0) * 100,
+        # Cálculo manual de P/VP para evitar N/A
+        "pvp": preco / info.get('bookValue', 1) if info.get('bookValue') else 0,
+        "pl": info.get('trailingPE') or 0,
+        "roe": (info.get('returnOnEquity') or 0) * 100,
+        "resumo": info.get('longBusinessSummary', 'Descrição não disponível.')
+    }
+    return dados
 
-if busca:
-    info, hist, ticker_final = buscar_dados_completos(busca)
+# ==============================
+# 3. LÓGICA DE PONTUAÇÃO (SCORE)
+# ==============================
+def calcular_score_pro(m, ticker):
+    score = 0
+    # Verifica se é FII (Geralmente termina em 11 na B3)
+    is_fii = ticker.endswith("11.SA")
+    
+    # Critérios de Dividendos
+    if m['dy'] > 8: score += 4
+    elif m['dy'] > 5: score += 2
+    
+    # Critérios de Preço (P/VP)
+    if 0.8 <= m['pvp'] <= 1.1: score += 3
+    elif m['pvp'] < 1.3: score += 1
+    
+    # Critérios de Eficiência (Apenas para Ações)
+    if not is_fii:
+        if m['roe'] > 15: score += 3
+        if 0 < m['pl'] < 15: score += 1
+    else:
+        # Bônus para FIIs (Compensa a falta de ROE/PL nos dados)
+        score += 3
+        
+    return min(score, 10)
 
-    if ticker_final:
-        # Extração de dados com tratamento de erro (Resolvendo o N/A)
-        preco = hist["Close"].iloc[-1]
-        # Para FIIs, o DY costuma estar em 'yield', para Ações em 'dividendYield'
-        dy = (info.get('dividendYield') or info.get('yield') or 0) * 100
-        pvp = preco / info.get('bookValue', 1) if info.get('bookValue') else 0
-        pl = info.get('trailingPE') or 0
-        roe = (info.get('returnOnEquity') or 0) * 100
-        nome = info.get('longName', ticker_final)
+# ==============================
+# 4. INTERFACE PRINCIPAL
+# ==============================
+with st.container():
+    busca = st.text_input("Busca Universal: Digite o código do ativo (Ex: MXRF11, PETR4, AAPL, BTC-USD):", "MXRF11")
+    btn_analisar = st.button("🔍 Analisar Agora")
 
-        # 4. LAYOUT EM COLUNAS PROFISSIONAIS
-        st.subheader(f"📊 Análise: {nome}")
+if busca or btn_analisar:
+    with st.spinner(f"Consultando dados de {busca}..."):
+        info, hist, ticker_confirmado = buscar_ativo_universal(busca)
+
+    if ticker_confirmado:
+        # Processamento
+        preco_atual = hist["Close"].iloc[-1]
+        m = extrair_metricas(info, preco_atual, ticker_confirmado)
+        score = calcular_score_pro(m, ticker_confirmado)
+        
+        # Exibição de Resultados
+        st.markdown(f"## {m['nome']} (`{ticker_confirmado}`)")
         
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Preço Atual", f"R$ {preco:.2f}")
-        col2.metric("Dividend Yield", f"{dy:.2f}%")
-        col3.metric("P/VP", f"{pvp:.2f}")
-        col4.metric("P/L", f"{pl:.2f}" if pl > 0 else "N/A")
-
-        # 5. LÓGICA DE SCORE DIFERENCIADA (Ações vs FIIs)
-        score = 0
-        is_fii = ".SA" in ticker_final and (len(ticker_final) >= 8 or ticker_final[-5:-3] == "11")
+        prefixo = "$" if m['moeda'] != 'BRL' else "R$"
         
-        if dy > 8: score += 4
-        if 0.8 < pvp < 1.1: score += 3
-        if not is_fii and roe > 15: score += 3
-        if is_fii: score += 3 # Bônus de estabilidade para FIIs
+        col1.metric("Preço Atual", f"{prefixo} {preco_atual:.2f}")
+        col2.metric("Dividend Yield", f"{m['dy']:.2f}%")
+        col3.metric("P/VP", f"{m['pvp']:.2f}")
+        col4.metric("P/L", f"{m['pl']:.2f}" if m['pl'] > 0 else "N/A")
 
-        # 6. EXIBIÇÃO DO SCORE E GRÁFICO
+        # Recomendação Visual baseada no Score
         st.markdown("---")
         if score >= 7:
-            st.success(f"**Pontuação: {score}/10** - Recomendação: 🟢 FORTE COMPRA")
+            st.success(f"### Score Investidor PRO: {score}/10 — 🟢 FORTE COMPRA")
         elif score >= 5:
-            st.warning(f"**Pontuação: {score}/10** - Recomendação: 🟡 NEUTRO / OBSERVAÇÃO")
+            st.warning(f"### Score Investidor PRO: {score}/10 — 🟡 NEUTRO / OBSERVAÇÃO")
         else:
-            st.error(f"**Pontuação: {score}/10** - Recomendação: 🔴 EVITAR NO MOMENTO")
+            st.error(f"### Score Investidor PRO: {score}/10 — 🔴 EVITAR NO MOMENTO")
 
-        st.line_chart(hist["Close"])
+        # Gráfico e Detalhes
+        tab_grafico, tab_info = st.tabs(["📈 Histórico de Preços", "📖 Sobre a Empresa/Fundo"])
         
-        with st.expander("📂 Ver Detalhes Técnicos"):
-            st.write(f"**Setor:** {info.get('sector', 'N/A')}")
-            st.write(f"**Ticker Oficial:** {ticker_final}")
-            st.write(f"**Resumo:** {info.get('longBusinessSummary', 'Sem resumo disponível.')}")
+        with tab_grafico:
+            st.line_chart(hist["Close"])
+            
+        with tab_info:
+            st.write(f"**Setor:** {m['setor']}")
+            st.write(f"**Moeda de Negociação:** {m['moeda']}")
+            st.info(m['resumo'])
     else:
-        st.error("❌ Ativo não encontrado. Tente digitar o código exato (Ex: PETR4).")
+        st.error(f"❌ Não foi possível encontrar o ativo '{busca}'. Verifique o ticker e tente novamente.")
+
+# Rodapé
+st.markdown("---")
+st.caption("Investidor PRO © 2026 - Dados fornecidos via Yahoo Finance API.")

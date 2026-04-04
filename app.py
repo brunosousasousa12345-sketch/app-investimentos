@@ -1,245 +1,226 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import sqlite3
-import hashlib
-from datetime import datetime
+import os
 
-# =========================
-# 🔒 BANCO DE DADOS
-# =========================
-conn = sqlite3.connect("app.db", check_same_thread=False)
-cursor = conn.cursor()
+# ==============================
+# CONFIG
+# ==============================
+st.set_page_config(page_title="Investidor PRO", layout="wide")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS usuarios (
-    user TEXT,
-    senha TEXT
-)
+st.markdown("<h1 style='text-align:center;'>🚀 Investidor PRO</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;'>Sua IA de investimentos</p>", unsafe_allow_html=True)
+
+# ==============================
+# SIDEBAR (MENU)
+# ==============================
+st.sidebar.title("📊 Menu")
+
+menu = st.sidebar.selectbox("Escolha:", [
+    "📈 Analisar Ativo",
+    "💼 Minha Carteira",
+    "🏆 Ranking",
+    "🤖 IA Carteira",
+])
+
+st.sidebar.markdown("---")
+
+# ==============================
+# PLANO PRO
+# ==============================
+st.sidebar.title("💰 Plano PRO")
+
+st.sidebar.markdown("""
+🔥 Acesso completo:
+
+✔️ IA avançada  
+✔️ Ranking completo  
+✔️ Carteira automática  
+
+💰 R$ 9,90/mês
 """)
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS carteira (
-    user TEXT,
-    ticker TEXT,
-    valor REAL,
-    data TEXT
-)
-""")
+st.sidebar.markdown("[👉 Assinar agora](SEU_LINK_AQUI)")
 
-conn.commit()
+# ==============================
+# FUNÇÕES
+# ==============================
 
-# =========================
-# 🔐 SEGURANÇA
-# =========================
-def hash_senha(senha):
-    return hashlib.sha256(senha.encode()).hexdigest()
+def get_data(ticker):
+    if not ticker.endswith(".SA") and len(ticker) <= 6:
+        ticker += ".SA"
+    acao = yf.Ticker(ticker)
+    info = acao.info
+    hist = acao.history(period="1y")
+    return info, hist
 
-def cadastrar(u, s):
-    s_hash = hash_senha(s)
-    cursor.execute("INSERT INTO usuarios VALUES (?, ?)", (u, s_hash))
-    conn.commit()
+def calcular_indicadores(info, preco):
+    dy = (info.get("dividendYield") or 0) * 100
+    roe = (info.get("returnOnEquity") or 0) * 100
+    pl = info.get("trailingPE") or 0
+    pvp = preco / (info.get("bookValue") or 1)
+    divida = info.get("debtToEquity") or 0
+    setor = info.get("sector") or "N/A"
+    nome = info.get("longName") or "N/A"
 
-def login(u, s):
-    s_hash = hash_senha(s)
-    cursor.execute("SELECT * FROM usuarios WHERE user=? AND senha=?", (u, s_hash))
-    return cursor.fetchone()
+    return {
+        "DY": dy,
+        "ROE": roe,
+        "P/L": pl,
+        "P/VP": pvp,
+        "Dívida": divida,
+        "Setor": setor,
+        "Nome": nome
+    }
 
-# =========================
-# 💼 CARTEIRA
-# =========================
-def add_ativo(u, t, v):
-    data = datetime.now().strftime("%d/%m/%Y")
-    cursor.execute("INSERT INTO carteira VALUES (?, ?, ?, ?)", (u, t, v, data))
-    conn.commit()
+def score_ativo(ind):
+    score = 0
+    
+    if ind["DY"] > 6:
+        score += 2
+    if ind["ROE"] > 15:
+        score += 2
+    if ind["P/L"] > 0 and ind["P/L"] < 15:
+        score += 2
+    if ind["P/VP"] < 1.5:
+        score += 2
+    if ind["Dívida"] < 100:
+        score += 2
 
-def get_carteira(u):
-    cursor.execute("SELECT ticker, valor FROM carteira WHERE user=?", (u,))
-    return cursor.fetchall()
+    return score
 
-# =========================
-# 📊 ANÁLISE PROFISSIONAL
-# =========================
-def analisar_ativo(ticker):
-    try:
-        if not ticker.endswith(".SA"):
-            ticker += ".SA"
+def recomendacao(score):
+    if score >= 8:
+        return "🟢 FORTE COMPRA"
+    elif score >= 6:
+        return "🟡 BOA"
+    elif score >= 4:
+        return "⚠️ NEUTRO"
+    else:
+        return "🔴 EVITAR"
 
-        ativo = yf.Ticker(ticker)
-        info = ativo.info or {}
+# ==============================
+# 1. ANALISAR ATIVO
+# ==============================
 
-        nome = info.get("shortName", "N/A")
-        setor = info.get("sector", "N/A")
-        industria = info.get("industry", "N/A")
+if menu == "📈 Analisar Ativo":
+    ticker = st.text_input("Digite o ticker:", "PETR4")
 
-        preco = info.get("currentPrice", 0)
-
-        dy_raw = info.get("dividendYield")
-        dy = dy_raw * 100 if dy_raw and dy_raw < 1 else dy_raw or 0
-
-        pvp = info.get("priceToBook", 0)
-        pl = info.get("trailingPE", 0)
-        roe = (info.get("returnOnEquity") or 0) * 100
-        divida = info.get("debtToEquity", 0)
-
-        receita = info.get("totalRevenue", 0)
-        patrimonio = info.get("totalAssets", 0)
-
+    if ticker:
         try:
-            hist = ativo.history(period="max")
-            anos = len(hist) / 252
+            info, hist = get_data(ticker)
+            preco = hist["Close"].iloc[-1]
+
+            ind = calcular_indicadores(info, preco)
+            score = score_ativo(ind)
+            rec = recomendacao(score)
+
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Preço", f"R$ {preco:.2f}")
+            col2.metric("DY", f"{ind['DY']:.2f}%")
+            col3.metric("ROE", f"{ind['ROE']:.2f}%")
+            col4.metric("P/L", f"{ind['P/L']:.2f}")
+
+            st.markdown("---")
+
+            st.subheader(ind["Nome"])
+            st.write(f"📊 Setor: {ind['Setor']}")
+
+            st.write(f"📌 P/VP: {ind['P/VP']:.2f}")
+            st.write(f"📌 Dívida/PL: {ind['Dívida']:.2f}")
+
+            st.markdown("---")
+
+            st.subheader("🤖 IA Recomenda:")
+            st.success(rec)
+
+            st.line_chart(hist["Close"])
+
         except:
-            anos = 0
+            st.error("Erro ao buscar ativo")
 
-        score = 0
-        if dy > 6: score += 1
-        if roe > 15: score += 2
-        if pvp and pvp < 1.2: score += 2
-        if divida and divida < 100: score += 1
+# ==============================
+# 2. CARTEIRA
+# ==============================
 
-        if score >= 5:
-            status = "🟢 BOM"
-        elif score >= 3:
-            status = "🟡 MÉDIO"
-        else:
-            status = "🔴 RUIM"
+if menu == "💼 Minha Carteira":
 
-        return {
-            "Ticker": ticker.replace(".SA", ""),
-            "Nome": nome,
-            "Setor": setor,
-            "Indústria": industria,
-            "Preço": preco,
-            "DY (%)": round(dy, 2),
-            "P/VP": round(pvp, 2),
-            "P/L": round(pl, 2),
-            "ROE (%)": round(roe, 2),
-            "Dívida": round(divida, 2),
-            "Receita": receita,
-            "Patrimônio": patrimonio,
-            "Tempo": round(anos, 1),
-            "Status": status
-        }
+    arquivo = "carteira.csv"
 
-    except Exception as e:
-        return {"Erro": str(e)}
+    if os.path.exists(arquivo):
+        df = pd.read_csv(arquivo)
+    else:
+        df = pd.DataFrame(columns=["Ticker"])
 
-# =========================
-# 🤖 RANKING + IA
-# =========================
-def gerar_ranking():
-    ativos = ["BBAS3","PETR4","VALE3","ITUB4","BBDC4",
-              "MXRF11","HGLG11","XPML11","VISC11","KNRI11"]
+    novo = st.text_input("Adicionar ativo")
+
+    if st.button("Adicionar"):
+        df.loc[len(df)] = [novo.upper()]
+        df.to_csv(arquivo, index=False)
+
+    st.write(df)
+
+    if not df.empty:
+        total_score = 0
+
+        for t in df["Ticker"]:
+            try:
+                info, hist = get_data(t)
+                preco = hist["Close"].iloc[-1]
+                ind = calcular_indicadores(info, preco)
+                score = score_ativo(ind)
+
+                st.write(f"**{t}** → Score: {score}")
+                total_score += score
+            except:
+                st.write(f"{t} erro")
+
+        st.success(f"Score médio: {total_score/len(df):.2f}")
+
+# ==============================
+# 3. RANKING
+# ==============================
+
+if menu == "🏆 Ranking":
+
+    ativos = ["PETR4", "VALE3", "ITUB4", "BBAS3", "MXRF11", "HGLG11"]
 
     lista = []
 
     for t in ativos:
-        dados = analisar_ativo(t)
+        try:
+            info, hist = get_data(t)
+            preco = hist["Close"].iloc[-1]
+            ind = calcular_indicadores(info, preco)
+            score = score_ativo(ind)
 
-        if "Erro" not in dados:
-            score = 0
-            if dados["DY (%)"] > 6: score += 1
-            if dados["ROE (%)"] > 15: score += 2
-            if dados["P/VP"] < 1.2: score += 2
+            lista.append([t, score])
+        except:
+            pass
 
-            lista.append({
-                "Ativo": t,
-                "DY": dados["DY (%)"],
-                "Score": score
-            })
+    df = pd.DataFrame(lista, columns=["Ativo", "Score"])
+    df = df.sort_values(by="Score", ascending=False)
 
-    return pd.DataFrame(lista).sort_values(by="Score", ascending=False)
+    st.dataframe(df)
 
-# =========================
-# 🚀 INTERFACE
-# =========================
-st.title("📊 Investimentos PRO")
+# ==============================
+# 4. IA CARTEIRA
+# ==============================
 
-if "user" not in st.session_state:
-    st.session_state.user = None
+if menu == "🤖 IA Carteira":
 
-if not st.session_state.user:
-    aba = st.radio("Login / Cadastro", ["Login", "Cadastrar"])
+    perfil = st.selectbox("Perfil:", ["Conservador", "Moderado", "Agressivo"])
 
-    user = st.text_input("Usuário")
-    senha = st.text_input("Senha", type="password")
+    if st.button("Gerar carteira"):
 
-    if aba == "Cadastrar":
-        if st.button("Criar conta"):
-            cadastrar(user, senha)
-            st.success("Conta criada!")
+        if perfil == "Conservador":
+            carteira = ["MXRF11", "HGLG11", "BBAS3"]
+        elif perfil == "Moderado":
+            carteira = ["ITUB4", "VALE3", "HGLG11"]
+        else:
+            carteira = ["PETR4", "VALE3", "GOAU4"]
 
-    else:
-        if st.button("Entrar"):
-            if login(user, senha):
-                st.session_state.user = user
-                st.success("Logado!")
-            else:
-                st.error("Erro no login")
+        st.success("Carteira sugerida:")
 
-else:
-    st.sidebar.write(f"👤 {st.session_state.user}")
-
-    aba1, aba2, aba3, aba4 = st.tabs(
-        ["📊 Análise", "💼 Carteira", "💰 Dividendos", "🤖 IA"]
-    )
-
-    # =====================
-    # 📊 ANÁLISE
-    # =====================
-    with aba1:
-        ativo = st.text_input("Digite o ativo")
-
-        if ativo:
-            dados = analisar_ativo(ativo)
-
-            if "Erro" in dados:
-                st.error(dados["Erro"])
-            else:
-                st.subheader(f"{dados['Ticker']} - {dados['Status']}")
-                st.write(dados)
-
-    # =====================
-    # 💼 CARTEIRA
-    # =====================
-    with aba2:
-        ticker = st.text_input("Ativo")
-        valor = st.number_input("Valor", 0.0)
-
-        if st.button("Adicionar"):
-            add_ativo(st.session_state.user, ticker, valor)
-            st.success("Adicionado!")
-
-        carteira = get_carteira(st.session_state.user)
-
-        if carteira:
-            df = pd.DataFrame(carteira, columns=["Ativo", "Valor"])
-            st.dataframe(df)
-
-            total = df["Valor"].sum()
-            st.subheader(f"Total investido: R$ {total}")
-
-    # =====================
-    # 💰 DIVIDENDOS
-    # =====================
-    with aba3:
-        carteira = get_carteira(st.session_state.user)
-
-        total_dy = 0
-
-        for t, v in carteira:
-            dados = analisar_ativo(t)
-            total_dy += v * (dados["DY (%)"] / 100)
-
-        st.subheader(f"Renda estimada anual: R$ {round(total_dy,2)}")
-
-    # =====================
-    # 🤖 IA
-    # =====================
-    with aba4:
-        ranking = gerar_ranking()
-        st.dataframe(ranking)
-
-        if not ranking.empty:
-            top = ranking.iloc[0]
-            st.success(f"Melhor ativo: {top['Ativo']}")
+        for a in carteira:
+            st.write(a)

@@ -236,6 +236,123 @@ with aba3:
 
         dy = dy_raw if dy_raw and dy_raw < 1 else (dy_raw or 0)/100
         div = v * dy
+        # =========================
+# 🤖 IA + RANKING
+# =========================
+with aba4:
+    st.subheader("🤖 Inteligência do Sistema")
+
+    lista_ativos = [
+        "BBAS3", "PETR4", "VALE3", "ITUB4", "BBDC4",
+        "MXRF11", "HGLG11", "XPML11", "VISC11", "KNRI11"
+    ]
+
+    ranking = []
+
+    for t in lista_ativos:
+        if not t.endswith(".SA"):
+            t_sa = t + ".SA"
+        else:
+            t_sa = t
+
+        acao = yf.Ticker(t_sa)
+        info = acao.info or {}
+
+        dy_raw = info.get("dividendYield")
+        dy = dy_raw * 100 if dy_raw and dy_raw < 1 else dy_raw or 0
+
+        roe = (info.get("returnOnEquity") or 0) * 100
+        pvp = info.get("priceToBook") or 0
+
+        score = 0
+
+        # AÇÕES
+        if info.get("quoteType") == "EQUITY":
+            if roe > 20: score += 2
+            elif roe > 10: score += 1
+
+            if dy > 8: score += 2
+            elif dy > 4: score += 1
+
+        # FIIs
+        else:
+            if dy > 10: score += 2
+            elif dy > 7: score += 1
+
+            if 0.8 < pvp < 1.2:
+                score += 2
+            elif pvp < 0.8:
+                score += 1
+
+        ranking.append({
+            "Ativo": t,
+            "DY (%)": dy,
+            "ROE/PVP": roe if roe > 0 else pvp,
+            "Score": score
+        })
+
+    df_rank = pd.DataFrame(ranking).sort_values(by="Score", ascending=False)
+
+    st.subheader("🏆 Top Ativos")
+    st.dataframe(df_rank, use_container_width=True)
+
+    top5 = df_rank.head(5)
+
+    st.subheader("🔥 Top 5 para investir")
+    for _, row in top5.iterrows():
+        st.success(f"{row['Ativo']} | Score {row['Score']}")
+
+    # =====================
+    # 🤖 IA DA CARTEIRA
+    # =====================
+    st.subheader("🧠 Análise da sua Carteira")
+
+    carteira = get_carteira(st.session_state.user)
+
+    if not carteira:
+        st.info("Adicione ativos para análise")
+    else:
+        total = len(carteira)
+
+        fiis = 0
+        acoes = 0
+
+        for t, _ in carteira:
+            if not t.endswith(".SA"):
+                t_sa = t + ".SA"
+            else:
+                t_sa = t
+
+            tipo = yf.Ticker(t_sa).info.get("quoteType", "")
+
+            if tipo == "EQUITY":
+                acoes += 1
+            else:
+                fiis += 1
+
+        st.write(f"Ações: {acoes} | FIIs: {fiis}")
+
+        # 🤖 DECISÕES
+        if fiis == 0:
+            st.warning("⚠️ Você não tem FIIs (sem renda passiva!)")
+
+        if acoes == 0:
+            st.warning("⚠️ Você não tem ações (sem crescimento!)")
+
+        if fiis > acoes:
+            st.info("📊 Carteira focada em renda")
+
+        elif acoes > fiis:
+            st.info("📈 Carteira focada em crescimento")
+
+        else:
+            st.success("⚖️ Carteira equilibrada")
+
+        # SUGESTÃO
+        melhor = df_rank.iloc[0]
+
+        st.subheader("🎯 Sugestão da IA")
+        st.success(f"Aportar em: {melhor['Ativo']} (Score {melhor['Score']})")
 
         total += div
         st.write(f"{t}: R$ {div:.2f}/ano")

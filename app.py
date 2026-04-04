@@ -12,61 +12,48 @@ st.markdown("<h1 style='text-align:center;'>🚀 Investidor PRO</h1>", unsafe_al
 st.markdown("<p style='text-align:center;'>Sua IA de investimentos</p>", unsafe_allow_html=True)
 
 # ==============================
-# MENU
+# BASE INTELIGENTE
 # ==============================
-st.sidebar.title("📊 Menu")
+ativos_base = {
+    "petrobras": "PETR4",
+    "vale": "VALE3",
+    "itau": "ITUB4",
+    "itaú": "ITUB4",
+    "banco do brasil": "BBAS3",
+    "bradesco": "BBDC4",
+    "weg": "WEGE3",
+    "ambev": "ABEV3",
 
-menu = st.sidebar.selectbox("Escolha:", [
-    "📈 Analisar Ativo",
-    "💼 Minha Carteira",
-    "🏆 Ranking",
-    "🤖 IA Carteira",
-])
+    "mxrf": "MXRF11",
+    "hglg": "HGLG11",
+    "xplg": "XPLG11",
 
-st.sidebar.markdown("---")
+    "apple": "AAPL",
+    "microsoft": "MSFT",
+    "google": "GOOGL",
+    "amazon": "AMZN",
+    "tesla": "TSLA"
+}
+
+def buscar_ticker(nome):
+    nome = nome.lower().strip()
+
+    if len(nome) <= 6 and nome.isalnum():
+        return nome.upper()
+
+    for chave in ativos_base:
+        if nome in chave:
+            return ativos_base[chave]
+
+    return None
 
 # ==============================
-# PLANO PRO
+# CACHE RÁPIDO
 # ==============================
-st.sidebar.title("💰 Plano PRO")
-
-st.sidebar.markdown("""
-🔥 Acesso completo:
-
-✔️ IA avançada  
-✔️ Ranking completo  
-✔️ Carteira automática  
-
-💰 R$ 9,90/mês
-""")
-
-st.sidebar.markdown("[👉 Assinar agora](SEU_LINK_AQUI)")
-
-# ==============================
-# CACHE (ULTRA IMPORTANTE)
-# ==============================
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def get_data(ticker):
-    if not ticker.endswith(".SA") and len(ticker) <= 6:
-        ticker += ".SA"
-
-    acao = yf.Ticker(ticker)
-
-    try:
-        info = acao.fast_info  # mais rápido
-    except:
-        info = acao.info
-
-    hist = acao.history(period="3mo")
-
-    return info, hist
-
 @st.cache_data(ttl=1800)
 def get_data(ticker):
-    ticker = ticker.upper().strip()
+    ticker = ticker.upper()
 
-    # Corrige automaticamente Brasil
     if "." not in ticker and len(ticker) <= 6:
         ticker += ".SA"
 
@@ -74,55 +61,94 @@ def get_data(ticker):
 
     try:
         hist = acao.history(period="3mo")
-
         if hist.empty:
             return None, None
 
-        # usa info completo (mais seguro)
         try:
             info = acao.info
         except:
             info = {}
 
         return info, hist
-
     except:
         return None, None
+
+@st.cache_data(ttl=1800)
+def calcular_indicadores(info, preco, ticker):
+    try:
+        dy = (info.get("dividendYield") or 0) * 100
+        roe = (info.get("returnOnEquity") or 0) * 100
+        pl = info.get("trailingPE") or 0
+        pvp = preco / (info.get("bookValue") or 1)
+        divida = info.get("debtToEquity") or 0
+        setor = info.get("sector") or "N/A"
+        nome = info.get("longName") or ticker
+    except:
+        dy, roe, pl, pvp, divida, setor, nome = 0,0,0,0,0,"N/A",ticker
+
+    return {
+        "DY": dy,
+        "ROE": roe,
+        "P/L": pl,
+        "P/VP": pvp,
+        "Dívida": divida,
+        "Setor": setor,
+        "Nome": nome
     }
 
 def score_ativo(ind):
     score = 0
-    
     if ind["DY"] > 6: score += 2
     if ind["ROE"] > 15: score += 2
     if ind["P/L"] > 0 and ind["P/L"] < 15: score += 2
     if ind["P/VP"] < 1.5: score += 2
     if ind["Dívida"] < 100: score += 2
-
     return score
 
 def recomendacao(score):
-    if score >= 8:
-        return "🟢 FORTE COMPRA"
-    elif score >= 6:
-        return "🟡 BOA"
-    elif score >= 4:
-        return "⚠️ NEUTRO"
-    else:
-        return "🔴 EVITAR"
+    if score >= 8: return "🟢 FORTE COMPRA"
+    elif score >= 6: return "🟡 BOA"
+    elif score >= 4: return "⚠️ NEUTRO"
+    else: return "🔴 EVITAR"
 
 # ==============================
-# 1. ANALISAR
+# MENU
 # ==============================
-if menu == "📈 Analisar Ativo":
+menu = st.sidebar.selectbox("Menu", [
+    "📈 Analisar",
+    "💼 Carteira",
+    "🏆 Ranking",
+    "🤖 IA Carteira"
+])
 
-    ticker = st.text_input("Digite o ativo:", "PETR4")
+# ==============================
+# ANALISAR
+# ==============================
+if menu == "📈 Analisar":
+
+    entrada = st.text_input("🔎 Nome ou código:", "petrobras")
+
+    sugestoes = list(ativos_base.keys())
+    escolha = st.selectbox("Sugestões:", [""] + sugestoes)
+
+    if escolha:
+        entrada = escolha
 
     if st.button("Analisar"):
-        with st.spinner("🔄 Buscando dados..."):
 
-            try:
+        ticker = buscar_ticker(entrada)
+
+        if not ticker:
+            st.error("Ativo não encontrado")
+        else:
+            st.success(f"{ticker}")
+
+            with st.spinner("Buscando dados..."):
                 info, hist = get_data(ticker)
+
+            if hist is None:
+                st.error("Erro ao buscar dados")
+            else:
                 preco = hist["Close"].iloc[-1]
 
                 ind = calcular_indicadores(info, preco, ticker)
@@ -135,27 +161,19 @@ if menu == "📈 Analisar Ativo":
                 col3.metric("ROE", f"{ind['ROE']:.2f}%")
                 col4.metric("P/L", f"{ind['P/L']:.2f}")
 
-                st.markdown("---")
+                st.write(f"Setor: {ind['Setor']}")
+                st.write(f"P/VP: {ind['P/VP']:.2f}")
+                st.write(f"Dívida: {ind['Dívida']:.2f}")
 
-                st.subheader(ind["Nome"])
-                st.write(f"📊 Setor: {ind['Setor']}")
-                st.write(f"📌 P/VP: {ind['P/VP']:.2f}")
-                st.write(f"📌 Dívida/PL: {ind['Dívida']:.2f}")
-
-                st.markdown("---")
-
-                st.subheader("🤖 IA Recomenda:")
+                st.subheader("Recomendação")
                 st.success(rec)
 
                 st.line_chart(hist["Close"])
 
-            except:
-                st.error("Erro ao buscar dados")
-
 # ==============================
-# 2. CARTEIRA
+# CARTEIRA
 # ==============================
-if menu == "💼 Minha Carteira":
+if menu == "💼 Carteira":
 
     arquivo = "carteira.csv"
 
@@ -167,65 +185,64 @@ if menu == "💼 Minha Carteira":
     novo = st.text_input("Adicionar ativo")
 
     if st.button("Adicionar"):
-        df.loc[len(df)] = [novo.upper()]
-        df.to_csv(arquivo, index=False)
+        ticker = buscar_ticker(novo)
+        if ticker:
+            df.loc[len(df)] = [ticker]
+            df.to_csv(arquivo, index=False)
 
     st.dataframe(df)
 
-    if st.button("Atualizar carteira"):
+    if st.button("Atualizar"):
         total = 0
 
         for t in df["Ticker"]:
-            try:
-                info, hist = get_data(t)
+            info, hist = get_data(t)
+
+            if hist is not None:
                 preco = hist["Close"].iloc[-1]
                 ind = calcular_indicadores(info, preco, t)
                 score = score_ativo(ind)
 
-                st.write(f"{t} → Score {score}")
+                st.write(f"{t} → {score}")
                 total += score
-            except:
-                st.write(f"{t} erro")
 
         if len(df) > 0:
-            st.success(f"Score médio: {total/len(df):.2f}")
+            st.success(f"Média: {total/len(df):.2f}")
 
 # ==============================
-# 3. RANKING
+# RANKING
 # ==============================
 if menu == "🏆 Ranking":
 
     if st.button("Gerar Ranking"):
 
-        ativos = ["PETR4","VALE3","ITUB4"]
+        ativos = ["PETR4","VALE3","ITUB4","BBAS3","MXRF11"]
 
-        resultados = []
+        lista = []
 
-        with st.spinner("Gerando ranking..."):
-            for t in ativos:
-                try:
-                    info, hist = get_data(t)
-                    preco = hist["Close"].iloc[-1]
-                    ind = calcular_indicadores(info, preco, t)
-                    score = score_ativo(ind)
+        for t in ativos:
+            info, hist = get_data(t)
 
-                    resultados.append([t, score])
-                except:
-                    pass
+            if hist is not None:
+                preco = hist["Close"].iloc[-1]
+                ind = calcular_indicadores(info, preco, t)
+                score = score_ativo(ind)
 
-        df = pd.DataFrame(resultados, columns=["Ativo","Score"])
+                lista.append([t, score])
+
+        df = pd.DataFrame(lista, columns=["Ativo","Score"])
         df = df.sort_values(by="Score", ascending=False)
 
         st.dataframe(df)
 
 # ==============================
-# 4. IA CARTEIRA
+# IA CARTEIRA
 # ==============================
 if menu == "🤖 IA Carteira":
 
-    perfil = st.selectbox("Perfil:", ["Conservador","Moderado","Agressivo"])
+    perfil = st.selectbox("Perfil", ["Conservador","Moderado","Agressivo"])
 
-    if st.button("Gerar carteira"):
+    if st.button("Gerar"):
 
         if perfil == "Conservador":
             carteira = ["MXRF11","HGLG11","BBAS3"]
@@ -233,8 +250,6 @@ if menu == "🤖 IA Carteira":
             carteira = ["ITUB4","VALE3","HGLG11"]
         else:
             carteira = ["PETR4","VALE3","GOAU4"]
-
-        st.success("Carteira sugerida:")
 
         for a in carteira:
             st.write(a)

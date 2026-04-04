@@ -4,252 +4,136 @@ import pandas as pd
 import os
 
 # ==============================
-# CONFIG
+# CONFIGURAÇÃO DA PÁGINA
 # ==============================
-st.set_page_config(page_title="Investidor PRO", layout="wide")
+st.set_page_config(page_title="Investidor PRO Universal", layout="wide", page_icon="📊")
 
 st.markdown("<h1 style='text-align:center;'>🚀 Investidor PRO</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;'>Sua IA de investimentos</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;'>Análise Universal: Ações, FIIs, Stocks e Cripto</p>", unsafe_allow_html=True)
 
 # ==============================
-# BASE INTELIGENTE
-# ==============================
-ativos_base = {
-    "petrobras": "PETR4",
-    "vale": "VALE3",
-    "itau": "ITUB4",
-    "itaú": "ITUB4",
-    "banco do brasil": "BBAS3",
-    "bradesco": "BBDC4",
-    "weg": "WEGE3",
-    "ambev": "ABEV3",
-
-    "mxrf": "MXRF11",
-    "hglg": "HGLG11",
-    "xplg": "XPLG11",
-
-    "apple": "AAPL",
-    "microsoft": "MSFT",
-    "google": "GOOGL",
-    "amazon": "AMZN",
-    "tesla": "TSLA"
-}
-
-def buscar_ticker(nome):
-    nome = nome.lower().strip()
-
-    if len(nome) <= 6 and nome.isalnum():
-        return nome.upper()
-
-    for chave in ativos_base:
-        if nome in chave:
-            return ativos_base[chave]
-
-    return None
-
-# ==============================
-# CACHE RÁPIDO
+# MOTOR DE BUSCA UNIVERSAL
 # ==============================
 @st.cache_data(ttl=1800)
-def get_data(ticker):
-    ticker = ticker.upper()
-
-    if "." not in ticker and len(ticker) <= 6:
-        ticker += ".SA"
-
-    acao = yf.Ticker(ticker)
-
-    try:
-        hist = acao.history(period="3mo")
-        if hist.empty:
-            return None, None
-
+def get_universal_data(ticker_input):
+    ticker_input = ticker_input.upper().strip()
+    
+    # Lista de tentativas: 1. Como digitado | 2. Com .SA (Brasil)
+    tentativas = [ticker_input, f"{ticker_input}.SA"]
+    
+    for t in tentativas:
         try:
-            info = acao.info
+            ativo = yf.Ticker(t)
+            hist = ativo.history(period="6mo")
+            
+            if not hist.empty:
+                # Se achou dados históricos, o ticker é válido
+                try:
+                    info = ativo.info
+                except:
+                    info = {}
+                return info, hist, t
         except:
-            info = {}
+            continue
+    return None, None, None
 
-        return info, hist
-    except:
-        return None, None
-
-@st.cache_data(ttl=1800)
 def calcular_indicadores(info, preco, ticker):
-    try:
-        dy = (info.get("dividendYield") or 0) * 100
-        roe = (info.get("returnOnEquity") or 0) * 100
-        pl = info.get("trailingPE") or 0
-        pvp = preco / (info.get("bookValue") or 1)
-        divida = info.get("debtToEquity") or 0
-        setor = info.get("sector") or "N/A"
-        nome = info.get("longName") or ticker
-    except:
-        dy, roe, pl, pvp, divida, setor, nome = 0,0,0,0,0,"N/A",ticker
-
-    return {
-        "DY": dy,
-        "ROE": roe,
-        "P/L": pl,
-        "P/VP": pvp,
-        "Dívida": divida,
-        "Setor": setor,
-        "Nome": nome
+    # Dicionário com travas para evitar erros de dados ausentes
+    res = {
+        "DY": (info.get("dividendYield", 0) or 0) * 100,
+        "ROE": (info.get("returnOnEquity", 0) or 0) * 100,
+        "PL": info.get("trailingPE", 0) or 0,
+        "PVP": preco / (info.get("bookValue", 1) or 1) if info.get("bookValue") else 0,
+        "Divida": info.get("debtToEquity", 0) or 0,
+        "Setor": info.get("sector", "Outros/Internacional"),
+        "Nome": info.get("longName", ticker),
+        "Moeda": info.get("currency", "N/A")
     }
+    return res
 
-def score_ativo(ind):
+def calcular_score(ind, ticker):
     score = 0
-    if ind["DY"] > 6: score += 2
-    if ind["ROE"] > 15: score += 2
-    if ind["P/L"] > 0 and ind["P/L"] < 15: score += 2
-    if ind["P/VP"] < 1.5: score += 2
-    if ind["Dívida"] < 100: score += 2
-    return score
-
-def recomendacao(score):
-    if score >= 8: return "🟢 FORTE COMPRA"
-    elif score >= 6: return "🟡 BOA"
-    elif score >= 4: return "⚠️ NEUTRO"
-    else: return "🔴 EVITAR"
-
-# ==============================
-# MENU
-# ==============================
-menu = st.sidebar.selectbox("Menu", [
-    "📈 Analisar",
-    "💼 Carteira",
-    "🏆 Ranking",
-    "🤖 IA Carteira"
-])
+    # Diferencia FIIs de Ações pela terminação (regra geral B3)
+    is_fii = ticker.endswith("11.SA")
+    
+    # Critérios Universais
+    if ind["DY"] > 6: score += 3
+    if 0.1 < ind["PVP"] < 1.2: score += 3
+    
+    if not is_fii:
+        if ind["ROE"] > 12: score += 2
+        if 0 < ind["PL"] < 20: score += 2
+    else:
+        # FIIs ganham pontos por outros critérios implícitos aqui
+        score += 4
+        
+    return min(score, 10)
 
 # ==============================
-# ANALISAR
+# INTERFACE PRINCIPAL
 # ==============================
+menu = st.sidebar.selectbox("Navegação", ["📈 Analisar", "💼 Carteira"])
+
 if menu == "📈 Analisar":
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        busca = st.text_input("Busca Universal (Ex: PETR4, MXRF11, AAPL, BTC-USD, EURBRL=X)", "PETR4")
+    with col2:
+        st.write("##")
+        btn = st.button("🔍 Analisar Agora")
 
-    entrada = st.text_input("🔎 Nome ou código:", "petrobras")
+    if btn or busca:
+        with st.spinner(f"Consultando mercado global por {busca}..."):
+            info, hist, ticker_final = get_universal_data(busca)
 
-    sugestoes = list(ativos_base.keys())
-    escolha = st.selectbox("Sugestões:", [""] + sugestoes)
+            if ticker_final:
+                preco_atual = hist["Close"].iloc[-1]
+                ind = calcular_indicadores(info, preco_atual, ticker_final)
+                score = calcular_score(ind, ticker_final)
+                
+                # Cabeçalho
+                st.subheader(f"{ind['Nome']} | Ticker: `{ticker_final}`")
+                
+                # Métricas
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Preço", f"{ind['Moeda']} {preco_atual:.2f}")
+                m2.metric("Div. Yield", f"{ind['DY']:.2f}%")
+                m3.metric("P/L", f"{ind['PL']:.2f}")
+                m4.metric("P/VP", f"{ind['PVP']:.2f}")
 
-    if escolha:
-        entrada = escolha
+                # Recomendação
+                if score >= 8: st.success(f"Score: {score}/10 - 🟢 Recomendação: Forte Compra")
+                elif score >= 5: st.warning(f"Score: {score}/10 - 🟡 Recomendação: Observação/Neutro")
+                else: st.error(f"Score: {score}/10 - 🔴 Recomendação: Evitar no momento")
 
-    if st.button("Analisar"):
-
-        ticker = buscar_ticker(entrada)
-
-        if not ticker:
-            st.error("Ativo não encontrado")
-        else:
-            st.success(f"{ticker}")
-
-            with st.spinner("Buscando dados..."):
-                info, hist = get_data(ticker)
-
-            if hist is None:
-                st.error("Erro ao buscar dados")
-            else:
-                preco = hist["Close"].iloc[-1]
-
-                ind = calcular_indicadores(info, preco, ticker)
-                score = score_ativo(ind)
-                rec = recomendacao(score)
-
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Preço", f"R$ {preco:.2f}")
-                col2.metric("DY", f"{ind['DY']:.2f}%")
-                col3.metric("ROE", f"{ind['ROE']:.2f}%")
-                col4.metric("P/L", f"{ind['P/L']:.2f}")
-
-                st.write(f"Setor: {ind['Setor']}")
-                st.write(f"P/VP: {ind['P/VP']:.2f}")
-                st.write(f"Dívida: {ind['Dívida']:.2f}")
-
-                st.subheader("Recomendação")
-                st.success(rec)
-
+                # Gráfico
                 st.line_chart(hist["Close"])
+                
+                with st.expander("Ver dados brutos do setor"):
+                    st.write(f"**Setor:** {ind['Setor']}")
+                    st.write(f"**Dívida/Equity:** {ind['Divida']}")
+            else:
+                st.error("Ativo não encontrado. Verifique se o ticker está correto.")
 
 # ==============================
-# CARTEIRA
+# CARTEIRA SIMPLES
 # ==============================
 if menu == "💼 Carteira":
+    st.subheader("Sua Lista de Monitoramento")
+    
+    if 'minha_carteira' not in st.session_state:
+        st.session_state.minha_carteira = []
 
-    arquivo = "carteira.csv"
-
-    if os.path.exists(arquivo):
-        df = pd.read_csv(arquivo)
-    else:
-        df = pd.DataFrame(columns=["Ticker"])
-
-    novo = st.text_input("Adicionar ativo")
-
+    novo_ativo = st.text_input("Adicionar Ticker à lista:")
     if st.button("Adicionar"):
-        ticker = buscar_ticker(novo)
-        if ticker:
-            df.loc[len(df)] = [ticker]
-            df.to_csv(arquivo, index=False)
+        if novo_ativo:
+            _, _, t_validado = get_universal_data(novo_ativo)
+            if t_validado:
+                st.session_state.minha_carteira.append(t_validado)
+                st.rerun()
+            else:
+                st.error("Ativo inválido.")
 
-    st.dataframe(df)
-
-    if st.button("Atualizar"):
-        total = 0
-
-        for t in df["Ticker"]:
-            info, hist = get_data(t)
-
-            if hist is not None:
-                preco = hist["Close"].iloc[-1]
-                ind = calcular_indicadores(info, preco, t)
-                score = score_ativo(ind)
-
-                st.write(f"{t} → {score}")
-                total += score
-
-        if len(df) > 0:
-            st.success(f"Média: {total/len(df):.2f}")
-
-# ==============================
-# RANKING
-# ==============================
-if menu == "🏆 Ranking":
-
-    if st.button("Gerar Ranking"):
-
-        ativos = ["PETR4","VALE3","ITUB4","BBAS3","MXRF11"]
-
-        lista = []
-
-        for t in ativos:
-            info, hist = get_data(t)
-
-            if hist is not None:
-                preco = hist["Close"].iloc[-1]
-                ind = calcular_indicadores(info, preco, t)
-                score = score_ativo(ind)
-
-                lista.append([t, score])
-
-        df = pd.DataFrame(lista, columns=["Ativo","Score"])
-        df = df.sort_values(by="Score", ascending=False)
-
-        st.dataframe(df)
-
-# ==============================
-# IA CARTEIRA
-# ==============================
-if menu == "🤖 IA Carteira":
-
-    perfil = st.selectbox("Perfil", ["Conservador","Moderado","Agressivo"])
-
-    if st.button("Gerar"):
-
-        if perfil == "Conservador":
-            carteira = ["MXRF11","HGLG11","BBAS3"]
-        elif perfil == "Moderado":
-            carteira = ["ITUB4","VALE3","HGLG11"]
-        else:
-            carteira = ["PETR4","VALE3","GOAU4"]
-
-        for a in carteira:
-            st.write(a)
+    if st.session_state.minha_carteira:
+        for a in list(set(st.session_state.minha_carteira)):
+            st.write(f"📌 {a}")

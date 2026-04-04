@@ -146,76 +146,114 @@ with aba1:
 # 💼 ABA 2 - CARTEIRA
 # =========================
 with aba2:
-    st.subheader("📊 Minha Carteira")
+    with aba2:
+    st.subheader("💼 Minha Carteira Inteligente")
 
-    carteira = ["BBAS3", "GOAU4", "CMIG3", "CPLE4", "PETR4"]
+    # 🔐 Inicializa carteira
+    if "carteira" not in st.session_state:
+        st.session_state.carteira = []
+
+    # ➕ ADICIONAR AÇÃO
+    st.markdown("### ➕ Adicionar Ativo")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        novo_ticker = st.text_input("Ticker", "").upper()
+
+    with col2:
+        valor_investido = st.number_input("Valor investido (R$)", min_value=0.0)
+
+    with col3:
+        if st.button("Adicionar"):
+            if novo_ticker:
+                st.session_state.carteira.append({
+                    "ticker": novo_ticker,
+                    "valor": valor_investido
+                })
+                st.success(f"{novo_ticker} adicionado!")
+
+    st.divider()
+
+    # 📊 MOSTRAR CARTEIRA
+    total_investido = 0
+    total_atual = 0
 
     dados = []
 
-    for t in carteira:
-        t_sa = f"{t}.SA"
-        a = yf.Ticker(t_sa)
-        i = a.info if a.info else {}
+    for ativo in st.session_state.carteira:
+        t = ativo["ticker"]
 
-        preco = a.history(period="1d")['Close']
-        preco = preco.iloc[-1] if not preco.empty else 0
-
-        dy_raw = i.get('dividendYield')
-        if dy_raw is None:
-            dy = 0
-        elif dy_raw < 1:
-            dy = dy_raw * 100
+        if not t.endswith(".SA"):
+            t_sa = f"{t}.SA"
         else:
-            dy = dy_raw
+            t_sa = t
 
-        roe = (i.get('returnOnEquity') or 0) * 100
-        divida = i.get('debtToEquity') or 0
+        acao = yf.Ticker(t_sa)
+        hist = acao.history(period="1d")
 
-        score = 0
-        if roe > 20:
-            score += 2
-        elif roe > 10:
-            score += 1
+        if not hist.empty:
+            preco = hist['Close'].iloc[-1]
+        else:
+            preco = 0
 
-        if dy > 8:
-            score += 2
-        elif dy > 4:
-            score += 1
+        valor = ativo["valor"]
+        cotas = valor / preco if preco > 0 else 0
+        atual = cotas * preco
 
-        if divida < 0.5:
-            score += 2
-        elif divida < 1:
-            score += 1
+        lucro = atual - valor
+
+        total_investido += valor
+        total_atual += atual
 
         dados.append({
             "Ticker": t,
-            "Preço": preco,
-            "DY (%)": dy,
-            "ROE (%)": roe,
-            "Score": score
+            "Investido": valor,
+            "Atual": atual,
+            "Lucro": lucro
         })
 
-    df = pd.DataFrame(dados)
+    if dados:
+        df = pd.DataFrame(dados)
 
-    st.dataframe(df.sort_values(by="Score", ascending=False), use_container_width=True)
+        st.dataframe(df, use_container_width=True)
 
-    top = df.sort_values(by="Score", ascending=False).iloc[0]
-    st.success(f"🏆 Melhor ação: {top['Ticker']}")
+        # 📊 RESUMO
+        lucro_total = total_atual - total_investido
 
-    # 📈 GRÁFICO
-    st.subheader("📈 Evolução da Carteira")
+        st.markdown("### 📊 Resumo")
 
-    df_total = pd.DataFrame()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Investido", f"R$ {total_investido:.2f}")
+        c2.metric("Atual", f"R$ {total_atual:.2f}")
+        c3.metric("Lucro", f"R$ {lucro_total:.2f}")
 
-    for t in carteira:
-        dados_hist = yf.Ticker(f"{t}.SA").history(period="1y")['Close']
-        if not dados_hist.empty:
-            df_total[t] = dados_hist
+        # 📈 GRÁFICO
+        st.subheader("📈 Evolução da Carteira")
 
-    if not df_total.empty:
-        df_total['Total'] = df_total.sum(axis=1)
-        fig2 = px.line(df_total, x=df_total.index, y='Total')
-        st.plotly_chart(fig2, use_container_width=True)
+        df_total = pd.DataFrame()
+
+        for ativo in st.session_state.carteira:
+            t = ativo["ticker"]
+
+            if not t.endswith(".SA"):
+                t_sa = f"{t}.SA"
+            else:
+                t_sa = t
+
+            hist = yf.Ticker(t_sa).history(period="1y")['Close']
+
+            if not hist.empty:
+                df_total[t] = hist
+
+        if not df_total.empty:
+            df_total["Total"] = df_total.sum(axis=1)
+
+            fig = px.line(df_total, x=df_total.index, y="Total")
+            st.plotly_chart(fig, use_container_width=True)
+
+    else:
+        st.info("Nenhuma ação adicionada ainda.")
 
 # =========================
 # 💰 ABA 3 - DIVIDENDOS

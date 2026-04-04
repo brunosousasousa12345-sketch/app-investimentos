@@ -2,26 +2,114 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.express as px
+import sqlite3
 
 st.set_page_config(page_title="Investidor PRO", layout="wide")
 
-# 🎨 ESTILO
+# =========================
+# 🗄️ BANCO DE DADOS
+# =========================
+conn = sqlite3.connect("banco.db", check_same_thread=False)
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS usuarios (
+    username TEXT,
+    password TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS carteira (
+    username TEXT,
+    ticker TEXT,
+    valor REAL
+)
+""")
+
+conn.commit()
+
+# =========================
+# 🔐 FUNÇÕES
+# =========================
+def cadastrar(user, senha):
+    cursor.execute("INSERT INTO usuarios VALUES (?, ?)", (user, senha))
+    conn.commit()
+
+def login(user, senha):
+    cursor.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (user, senha))
+    return cursor.fetchone()
+
+def salvar_ativo(user, ticker, valor):
+    cursor.execute("INSERT INTO carteira VALUES (?, ?, ?)", (user, ticker, valor))
+    conn.commit()
+
+def carregar_carteira(user):
+    cursor.execute("SELECT ticker, valor FROM carteira WHERE username=?", (user,))
+    return cursor.fetchall()
+
+def limpar_carteira(user):
+    cursor.execute("DELETE FROM carteira WHERE username=?", (user,))
+    conn.commit()
+
+# =========================
+# 🎨 VISUAL
+# =========================
 st.markdown("""
 <style>
 body { background-color: #0E1117; }
 div[data-testid="stMetric"] {
     background-color: #1E222A;
     padding: 15px;
-    border-radius: 12px;
+    border-radius: 10px;
 }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📈 Investidor PRO")
-st.caption("Sistema profissional de análise de ações")
+# =========================
+# 🔐 LOGIN
+# =========================
+if "logado" not in st.session_state:
+    st.session_state.logado = False
 
-# SIDEBAR
-ticker = st.sidebar.text_input("Digite o Ticker:", "BBAS3").upper()
+if not st.session_state.logado:
+    st.title("🔐 Login - Investidor PRO")
+
+    aba_login, aba_cadastro = st.tabs(["Entrar", "Cadastrar"])
+
+    with aba_login:
+        user = st.text_input("Usuário")
+        senha = st.text_input("Senha", type="password")
+
+        if st.button("Entrar"):
+            if login(user, senha):
+                st.session_state.logado = True
+                st.session_state.user = user
+                st.success("Login realizado!")
+                st.rerun()
+            else:
+                st.error("Usuário ou senha inválidos")
+
+    with aba_cadastro:
+        new_user = st.text_input("Novo usuário")
+        new_pass = st.text_input("Nova senha", type="password")
+
+        if st.button("Cadastrar"):
+            cadastrar(new_user, new_pass)
+            st.success("Cadastro realizado!")
+
+    st.stop()
+
+# =========================
+# 🚪 LOGADO
+# =========================
+st.title(f"📈 Investidor PRO | {st.session_state.user}")
+
+if st.button("Sair"):
+    st.session_state.logado = False
+    st.rerun()
+
+ticker = st.sidebar.text_input("Ticker", "BBAS3").upper()
 if not ticker.endswith(".SA"):
     ticker += ".SA"
 
@@ -34,68 +122,21 @@ with aba1:
     try:
         acao = yf.Ticker(ticker)
         hist = acao.history(period="1y")
-        info = acao.info if acao.info else {}
+        info = acao.info or {}
 
         preco = hist['Close'].iloc[-1] if not hist.empty else 0
-
-        vpa = info.get('bookValue') or 0
-        lpa = info.get('trailingEps') or 0
-        pl = info.get('trailingPE') or 0
         roe = (info.get('returnOnEquity') or 0) * 100
-        divida = info.get('debtToEquity') or 0
 
-        # DY CORRIGIDO
         dy_raw = info.get('dividendYield')
-        if dy_raw is None:
-            dy = 0
-        elif dy_raw < 1:
-            dy = dy_raw * 100
-        else:
-            dy = dy_raw
+        dy = dy_raw * 100 if dy_raw and dy_raw < 1 else dy_raw or 0
 
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns(3)
         c1.metric("Preço", f"R$ {preco:.2f}")
-        c2.metric("P/L", f"{pl:.2f}")
-        c3.metric("DY", f"{dy:.2f}%")
-        c4.metric("ROE", f"{roe:.2f}%")
+        c2.metric("DY", f"{dy:.2f}%")
+        c3.metric("ROE", f"{roe:.2f}%")
 
-        st.subheader("📊 Histórico")
-        fig = px.line(hist, x=hist.index, y='Close')
+        fig = px.line(hist, x=hist.index, y="Close")
         st.plotly_chart(fig, use_container_width=True)
-
-        # PREÇO JUSTO
-        if lpa > 0 and vpa > 0:
-            preco_justo = (22.5 * lpa * vpa) ** 0.5
-            margem = ((preco_justo / preco) - 1) * 100 if preco > 0 else 0
-
-            st.subheader("⚖️ Preço Justo")
-            st.write(f"R$ {preco_justo:.2f}")
-
-            if margem > 20:
-                st.success(f"🟢 Margem {margem:.2f}%")
-            elif margem > 0:
-                st.warning(f"🟡 Margem {margem:.2f}%")
-            else:
-                st.error(f"🔴 Margem {margem:.2f}%")
-
-        # SCORE
-        score = 0
-        if roe > 20: score += 2
-        elif roe > 10: score += 1
-
-        if dy > 8: score += 2
-        elif dy > 4: score += 1
-
-        if divida < 0.5: score += 2
-        elif divida < 1: score += 1
-
-        st.subheader("🧠 Nota")
-        if score >= 5:
-            st.success("🟢 BOA")
-        elif score >= 3:
-            st.warning("🟡 MÉDIA")
-        else:
-            st.error("🔴 FRACA")
 
     except:
         st.error("Erro ao carregar dados")
@@ -105,9 +146,6 @@ with aba1:
 # =========================
 with aba2:
     st.subheader("💼 Minha Carteira")
-
-    if "carteira" not in st.session_state:
-        st.session_state.carteira = []
 
     col1, col2, col3 = st.columns(3)
 
@@ -119,19 +157,16 @@ with aba2:
 
     with col3:
         if st.button("Adicionar"):
-            if novo:
-                st.session_state.carteira.append({
-                    "ticker": novo,
-                    "valor": valor
-                })
+            salvar_ativo(st.session_state.user, novo, valor)
+            st.success("Adicionado!")
+
+    carteira = carregar_carteira(st.session_state.user)
 
     total_investido = 0
     total_atual = 0
     dados = []
 
-    for ativo in st.session_state.carteira:
-        t = ativo["ticker"]
-
+    for t, valor in carteira:
         if not t.endswith(".SA"):
             t += ".SA"
 
@@ -140,17 +175,16 @@ with aba2:
 
         preco = hist['Close'].iloc[-1] if not hist.empty else 0
 
-        investido = ativo["valor"]
-        cotas = investido / preco if preco > 0 else 0
+        cotas = valor / preco if preco > 0 else 0
         atual = cotas * preco
-        lucro = atual - investido
+        lucro = atual - valor
 
-        total_investido += investido
+        total_investido += valor
         total_atual += atual
 
         dados.append({
             "Ticker": t,
-            "Investido": investido,
+            "Investido": valor,
             "Atual": atual,
             "Lucro": lucro
         })
@@ -169,13 +203,11 @@ with aba2:
         # GRÁFICO
         df_total = pd.DataFrame()
 
-        for ativo in st.session_state.carteira:
-            t = ativo["ticker"]
+        for t, _ in carteira:
             if not t.endswith(".SA"):
                 t += ".SA"
 
             hist = yf.Ticker(t).history(period="1y")['Close']
-
             if not hist.empty:
                 df_total[t] = hist
 
@@ -184,8 +216,9 @@ with aba2:
             fig = px.line(df_total, x=df_total.index, y="Total")
             st.plotly_chart(fig, use_container_width=True)
 
-    else:
-        st.info("Adicione ativos")
+    if st.button("🗑️ Limpar Carteira"):
+        limpar_carteira(st.session_state.user)
+        st.warning("Carteira apagada!")
 
 # =========================
 # 💰 DIVIDENDOS
@@ -193,30 +226,20 @@ with aba2:
 with aba3:
     st.subheader("💰 Dividendos")
 
-    investimento = st.number_input("Valor por ação", 1000.0)
-
+    carteira = carregar_carteira(st.session_state.user)
     total = 0
 
-    for ativo in st.session_state.carteira:
-        t = ativo["ticker"]
-
+    for t, valor in carteira:
         if not t.endswith(".SA"):
             t += ".SA"
 
         info = yf.Ticker(t).info or {}
+        dy_raw = info.get("dividendYield")
 
-        dy_raw = info.get('dividendYield')
+        dy = dy_raw if dy_raw and dy_raw < 1 else (dy_raw or 0) / 100
+        dividendos = valor * dy
 
-        if dy_raw is None:
-            dy = 0
-        elif dy_raw < 1:
-            dy = dy_raw
-        else:
-            dy = dy_raw / 100
-
-        dividendos = investimento * dy
         total += dividendos
-
         st.write(f"{t}: R$ {dividendos:.2f}/ano")
 
     st.success(f"Total anual: R$ {total:.2f}")

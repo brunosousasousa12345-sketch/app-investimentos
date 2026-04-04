@@ -86,3 +86,98 @@ try:
 
 except:
     st.error("Erro ao carregar dados.")
+    st.markdown("---")
+st.subheader("📊 Análise da Minha Carteira")
+
+carteira = ["BBAS3", "GOAU4", "CMIG3", "CPLE4", "PETR4"]
+
+dados = []
+
+for t in carteira:
+    t_sa = f"{t}.SA"
+    a = yf.Ticker(t_sa)
+    i = a.info if a.info else {}
+
+    preco = a.history(period="1d")['Close']
+    preco = preco.iloc[-1] if not preco.empty else 0
+
+    dy = (i.get('dividendYield') or 0) * 100
+    roe = (i.get('returnOnEquity') or 0) * 100
+    divida = i.get('debtToEquity') or 0
+
+    score = 0
+    if roe > 15:
+        score += 1
+    if dy > 5:
+        score += 1
+    if divida < 1:
+        score += 1
+
+    dados.append({
+        "Ticker": t,
+        "Preço": preco,
+        "DY (%)": dy,
+        "ROE (%)": roe,
+        "Dívida": divida,
+        "Score": score
+    })
+
+df = pd.DataFrame(dados)
+
+st.dataframe(df.sort_values(by="Score", ascending=False))
+
+st.subheader("🏆 Ranking")
+
+top = df.sort_values(by="Score", ascending=False).iloc[0]
+
+st.success(f"Melhor ação da carteira: {top['Ticker']}")
+# RECOMENDAÇÃO
+st.subheader("🤖 Recomendação")
+
+if score == 3:
+    st.success("🟢 COMPRAR")
+elif score == 2:
+    st.warning("🟡 SEGURAR")
+else:
+    st.error("🔴 VENDER")
+    st.markdown("---")
+st.subheader("📈 Evolução da Carteira")
+
+carteira = ["BBAS3", "GOAU4", "CMIG3", "CPLE4", "PETR4"]
+
+df_total = pd.DataFrame()
+
+for t in carteira:
+    t_sa = f"{t}.SA"
+    dados = yf.Ticker(t_sa).history(period="1y")['Close']
+    
+    if not dados.empty:
+        df_total[t] = dados
+
+df_total['Total'] = df_total.sum(axis=1)
+
+fig2 = px.line(df_total, x=df_total.index, y='Total', title="Carteira Total")
+st.plotly_chart(fig2, use_container_width=True)
+st.markdown("---")
+st.subheader("💰 Previsão de Dividendos")
+
+total_dividendos = 0
+
+for t in carteira:
+    t_sa = f"{t}.SA"
+    a = yf.Ticker(t_sa)
+    i = a.info if a.info else {}
+
+    preco = a.history(period="1d")['Close']
+    preco = preco.iloc[-1] if not preco.empty else 0
+
+    dy = (i.get('dividendYield') or 0)
+
+    investimento = 1000  # valor fixo por ação (pode melhorar depois)
+    dividendos = investimento * dy
+
+    total_dividendos += dividendos
+
+    st.write(f"{t}: R$ {dividendos:.2f}/ano")
+
+st.success(f"💵 Total estimado: R$ {total_dividendos:.2f}/ano")

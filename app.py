@@ -5,8 +5,9 @@ import plotly.graph_objects as go
 import plotly.express as px
 import requests
 import json
-import os
+import numpy as np
 from datetime import datetime, timedelta
+import json
 
 # ==============================
 # CONFIGURAÇÃO DA PÁGINA
@@ -48,25 +49,6 @@ st.markdown("""
     .score-amarelo{ background:#3b2e0d; color:#f0c040; border:1px solid #f0c040; border-radius:8px; padding:6px 14px; font-weight:700; font-size:18px; }
     .score-vermelho{ background:#3b0d0d; color:#ff6b6b; border:1px solid #ff6b6b; border-radius:8px; padding:6px 14px; font-weight:700; font-size:18px; }
 
-    /* Tabela da carteira */
-    .carteira-header { color:#00d4aa; font-size:14px; font-weight:700; }
-
-    /* Tags de tipo */
-    .tag-acao { background:#1a3a5c; color:#4da6ff; border-radius:4px; padding:2px 8px; font-size:11px; font-weight:600; }
-    .tag-fii  { background:#1a3a2a; color:#00d4aa; border-radius:4px; padding:2px 8px; font-size:11px; font-weight:600; }
-    .tag-etf  { background:#3a2a1a; color:#f0a040; border-radius:4px; padding:2px 8px; font-size:11px; font-weight:600; }
-    .tag-bdr  { background:#2a1a3a; color:#c080ff; border-radius:4px; padding:2px 8px; font-size:11px; font-weight:600; }
-
-    /* Botões */
-    .stButton>button {
-        border-radius: 8px;
-        font-weight: 600;
-        transition: all 0.2s;
-    }
-
-    /* Separador */
-    hr { border-color: #2e3250; }
-
     /* Título principal */
     .titulo-principal {
         text-align: center;
@@ -82,10 +64,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================
-# PERSISTÊNCIA DA CARTEIRA (session_state)
+# INICIALIZAR SESSION STATE
 # ==============================
 if "carteira" not in st.session_state:
-    st.session_state.carteira = {}   # {ticker: {qtd, preco_medio, tipo}}
+    st.session_state.carteira = {}
 
 if "lista_acoes" not in st.session_state:
     st.session_state.lista_acoes = []
@@ -96,12 +78,18 @@ if "lista_fiis" not in st.session_state:
 if "lista_carregada" not in st.session_state:
     st.session_state.lista_carregada = False
 
+if "metas" not in st.session_state:
+    st.session_state.metas = {}
+
+if "historico_patrimonio" not in st.session_state:
+    st.session_state.historico_patrimonio = []
+
 # ==============================
-# FUNÇÕES DE DADOS
+# FUNÇÕES AUXILIARES
 # ==============================
 @st.cache_data(ttl=3600)
 def carregar_lista_ativos():
-    """Carrega lista completa de ações e fundos da B3 via brapi.dev (sem token)."""
+    """Carrega lista de ações e fundos da B3."""
     acoes, fiis = [], []
     try:
         r = requests.get("https://brapi.dev/api/quote/list?type=stock", timeout=15)
@@ -110,7 +98,7 @@ def carregar_lista_ativos():
             acoes = [
                 {"ticker": x["stock"], "nome": x.get("name", x["stock"]), "setor": x.get("sector", ""), "tipo": "Ação"}
                 for x in data.get("stocks", [])
-                if not x["stock"].endswith("F")  # Remove fracionários
+                if not x["stock"].endswith("F")
             ]
     except Exception:
         pass
@@ -132,7 +120,7 @@ def carregar_lista_ativos():
 
 @st.cache_data(ttl=600)
 def buscar_ativo(ticker_input: str):
-    """Busca dados completos de um ativo via yfinance."""
+    """Busca dados de um ativo."""
     ticker = ticker_input.upper().strip()
     tentativas = [f"{ticker}.SA", ticker]
 
@@ -149,15 +137,27 @@ def buscar_ativo(ticker_input: str):
     return None, None, None, None
 
 
+@st.cache_data(ttl=3600)
+def buscar_benchmark(ticker: str, periodo: str = "1y"):
+    """Busca dados de benchmark (IBOV, CDI)."""
+    try:
+        bench = yf.Ticker(ticker)
+        hist = bench.history(period=periodo)
+        if not hist.empty:
+            return hist
+    except Exception:
+        pass
+    return None
+
+
 def extrair_metricas(info: dict, preco: float, ticker_final: str) -> dict:
-    """Extrai e normaliza métricas financeiras do ativo."""
+    """Extrai métricas financeiras."""
     dy_raw = (
         info.get("dividendYield")
         or info.get("yield")
         or info.get("trailingAnnualDividendYield")
         or 0
     )
-    # yfinance às vezes retorna DY já em %, às vezes em decimal
     dy = dy_raw * 100 if dy_raw < 1 else dy_raw
 
     book = info.get("bookValue") or 0
@@ -185,12 +185,11 @@ def extrair_metricas(info: dict, preco: float, ticker_final: str) -> dict:
 
 
 def calcular_score(m: dict, ticker: str) -> tuple[int, list]:
-    """Calcula score de 0 a 10 com justificativas."""
+    """Calcula score de 0 a 10."""
     score = 0
     detalhes = []
     is_fii = ticker.endswith("11.SA") or ticker.endswith("11")
 
-    # Dividend Yield
     if m["dy"] > 10:
         score += 4
         detalhes.append(("✅ DY excelente (>10%)", "+4"))
@@ -203,7 +202,6 @@ def calcular_score(m: dict, ticker: str) -> tuple[int, list]:
     else:
         detalhes.append(("❌ DY baixo ou zero", "+0"))
 
-    # P/VP
     if 0 < m["pvp"] <= 1.0:
         score += 3
         detalhes.append(("✅ P/VP abaixo do patrimônio (≤1)", "+3"))
@@ -216,7 +214,6 @@ def calcular_score(m: dict, ticker: str) -> tuple[int, list]:
     else:
         detalhes.append(("❌ P/VP muito alto ou indisponível", "+0"))
 
-    # ROE / P/L (apenas ações)
     if not is_fii:
         if m["roe"] > 20:
             score += 2
@@ -235,7 +232,6 @@ def calcular_score(m: dict, ticker: str) -> tuple[int, list]:
         else:
             detalhes.append(("❌ P/L alto ou negativo", "+0"))
     else:
-        # FIIs recebem bônus por estrutura
         score += 2
         detalhes.append(("✅ Bônus FII (estrutura de distribuição)", "+2"))
 
@@ -255,7 +251,7 @@ def formatar_market_cap(valor: float) -> str:
 
 
 def calcular_rentabilidade_carteira():
-    """Calcula rentabilidade atual da carteira."""
+    """Calcula rentabilidade da carteira."""
     rows = []
     total_investido = 0
     total_atual = 0
@@ -286,20 +282,67 @@ def calcular_rentabilidade_carteira():
     return pd.DataFrame(rows), total_investido, total_atual
 
 
+def calcular_dividendos_futuros():
+    """Projeta dividendos futuros baseado no histórico."""
+    projecoes = []
+
+    for ticker, dados in st.session_state.carteira.items():
+        info, hist, divs, _ = buscar_ativo(ticker)
+        if divs is not None and len(divs) > 0:
+            media_div = divs.tail(12).mean() if len(divs) >= 12 else divs.mean()
+            qtd = dados["qtd"]
+            projecao_anual = media_div * qtd * 12
+            projecao_mensal = media_div * qtd
+
+            projecoes.append({
+                "Ticker": ticker.replace(".SA", ""),
+                "Dividendo Médio": round(media_div, 4),
+                "Projeção Mensal (R$)": round(projecao_mensal, 2),
+                "Projeção Anual (R$)": round(projecao_anual, 2),
+            })
+
+    return pd.DataFrame(projecoes) if projecoes else pd.DataFrame()
+
+
+def comparar_com_benchmarks():
+    """Compara rentabilidade da carteira com IBOV e CDI."""
+    if not st.session_state.carteira:
+        return None
+
+    _, _, total_investido, total_atual = calcular_rentabilidade_carteira()
+    rentabilidade_carteira = ((total_atual - total_investido) / total_investido * 100) if total_investido > 0 else 0
+
+    # Buscar IBOV
+    ibov_hist = buscar_benchmark("^BVSP", "1y")
+    if ibov_hist is not None and not ibov_hist.empty:
+        ibov_retorno = ((ibov_hist["Close"].iloc[-1] - ibov_hist["Close"].iloc[0]) / ibov_hist["Close"].iloc[0]) * 100
+    else:
+        ibov_retorno = 0
+
+    # Simular CDI (aproximadamente 0.055% ao dia)
+    cdi_diario = 0.00055
+    cdi_retorno = ((1 + cdi_diario) ** 252 - 1) * 100
+
+    return {
+        "Carteira": rentabilidade_carteira,
+        "IBOV": ibov_retorno,
+        "CDI": cdi_retorno,
+    }
+
+
 # ==============================
-# SIDEBAR — NAVEGAÇÃO
+# SIDEBAR
 # ==============================
 with st.sidebar:
     st.markdown("## 📈 Investidor PRO")
     st.markdown("---")
     pagina = st.radio(
         "Navegação",
-        ["🔍 Analisar Ativo", "📊 Minha Carteira", "🔎 Explorar Mercado", "📋 Comparar Ativos"],
+        ["📊 Dashboard", "🔍 Analisar Ativo", "💼 Minha Carteira", "📅 Dividendos", "🎯 Metas", "🔎 Explorar Mercado", "📋 Comparar Ativos"],
         label_visibility="collapsed"
     )
     st.markdown("---")
 
-    # Carregar listas de ativos
     if not st.session_state.lista_carregada:
         with st.spinner("Carregando lista de ativos..."):
             acoes, fiis = carregar_lista_ativos()
@@ -309,22 +352,89 @@ with st.sidebar:
 
     total_a = len(st.session_state.lista_acoes)
     total_f = len(st.session_state.lista_fiis)
-    st.markdown(f"**Ações disponíveis:** {total_a}")
-    st.markdown(f"**FIIs/ETFs disponíveis:** {total_f}")
+    st.markdown(f"**Ações:** {total_a}")
+    st.markdown(f"**FIIs/ETFs:** {total_f}")
     st.markdown("---")
     st.caption("Dados: Yahoo Finance · brapi.dev")
-    st.caption("Investidor PRO © 2026")
 
 
 # ==============================
-# PÁGINA 1: ANALISAR ATIVO
+# PÁGINA 1: DASHBOARD
 # ==============================
-if "Analisar" in pagina:
+if "Dashboard" in pagina:
+    st.markdown("<h1 class='titulo-principal'>📊 Dashboard</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='subtitulo'>Visão geral da sua carteira de investimentos</p>", unsafe_allow_html=True)
+    st.markdown("---")
+
+    if not st.session_state.carteira:
+        st.info("📭 Sua carteira está vazia. Adicione ativos para ver o dashboard.")
+    else:
+        df_carteira, total_investido, total_atual = calcular_rentabilidade_carteira()
+        rentabilidade_total = ((total_atual - total_investido) / total_investido * 100) if total_investido > 0 else 0
+        lucro_prejuizo = total_atual - total_investido
+
+        # Resumo geral
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("Total Investido", f"R$ {total_investido:,.2f}")
+        col2.metric("Valor Atual", f"R$ {total_atual:,.2f}", f"{rentabilidade_total:+.2f}%")
+        col3.metric("Lucro / Prejuízo", f"R$ {lucro_prejuizo:+,.2f}")
+        col4.metric("Nº de Ativos", len(df_carteira))
+        col5.metric("Patrimônio", f"R$ {total_atual:,.2f}")
+
+        st.markdown("---")
+
+        # Gráficos
+        col_g1, col_g2 = st.columns(2)
+
+        with col_g1:
+            st.markdown("#### Distribuição por Ativo")
+            fig_pie = px.pie(
+                df_carteira,
+                values="Valor Atual (R$)",
+                names="Ticker",
+                color_discrete_sequence=px.colors.sequential.Teal,
+                template="plotly_dark"
+            )
+            fig_pie.update_layout(height=350, margin=dict(l=0, r=0, t=20, b=0))
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        with col_g2:
+            st.markdown("#### Rentabilidade vs Benchmarks")
+            benchmarks = comparar_com_benchmarks()
+            if benchmarks:
+                fig_bench = go.Figure(data=[
+                    go.Bar(name="Carteira", x=["Retorno"], y=[benchmarks["Carteira"]], marker_color="#00d4aa"),
+                    go.Bar(name="IBOV", x=["Retorno"], y=[benchmarks["IBOV"]], marker_color="#4da6ff"),
+                    go.Bar(name="CDI", x=["Retorno"], y=[benchmarks["CDI"]], marker_color="#f0c040"),
+                ])
+                fig_bench.update_layout(
+                    template="plotly_dark",
+                    height=350,
+                    margin=dict(l=0, r=0, t=20, b=0),
+                    barmode="group",
+                    yaxis_title="Retorno (%)"
+                )
+                st.plotly_chart(fig_bench, use_container_width=True)
+
+        st.markdown("---")
+
+        # Tabela de posições
+        st.markdown("### 📋 Posições Atuais")
+        df_display = df_carteira.copy()
+        df_display["Rentabilidade (%)"] = df_display["Rentabilidade (%)"].apply(
+            lambda x: f"{'🟢' if x >= 0 else '🔴'} {x:+.2f}%"
+        )
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+
+# ==============================
+# PÁGINA 2: ANALISAR ATIVO
+# ==============================
+elif "Analisar" in pagina:
     st.markdown("<h1 class='titulo-principal'>🔍 Analisar Ativo</h1>", unsafe_allow_html=True)
     st.markdown("<p class='subtitulo'>Análise completa de ações, FIIs, ETFs e BDRs</p>", unsafe_allow_html=True)
     st.markdown("---")
 
-    # Busca com autocomplete
     todos_ativos = st.session_state.lista_acoes + st.session_state.lista_fiis
     opcoes_busca = [f"{a['ticker']} — {a['nome']}" for a in todos_ativos]
 
@@ -338,16 +448,6 @@ if "Analisar" in pagina:
     with col_btn:
         btn_analisar = st.button("🔍 Analisar", use_container_width=True, type="primary")
 
-    # Sugestões de autocomplete
-    if busca_texto and len(busca_texto) >= 2:
-        sugestoes = [o for o in opcoes_busca if busca_texto.upper() in o.upper()][:8]
-        if sugestoes:
-            ticker_selecionado = st.selectbox(
-                "Sugestões:", [""] + sugestoes, label_visibility="collapsed"
-            )
-            if ticker_selecionado:
-                busca_texto = ticker_selecionado.split(" — ")[0]
-
     if busca_texto and (btn_analisar or True):
         ticker_limpo = busca_texto.split(" — ")[0].strip()
         with st.spinner(f"Buscando dados de **{ticker_limpo}**..."):
@@ -358,10 +458,8 @@ if "Analisar" in pagina:
             m = extrair_metricas(info, preco_atual, ticker_confirmado)
             score, detalhes_score = calcular_score(m, ticker_confirmado)
 
-            # Cabeçalho do ativo
             col_nome, col_score = st.columns([3, 1])
             with col_nome:
-                tipo_tag = "fii" if ticker_confirmado.endswith("11.SA") else "acao"
                 st.markdown(f"## {m['nome']}")
                 st.markdown(f"`{ticker_confirmado}` · **{m['setor']}** · {m['moeda']}")
             with col_score:
@@ -374,67 +472,40 @@ if "Analisar" in pagina:
 
             st.markdown("---")
 
-            # Métricas principais
             prefixo = "$" if m["moeda"] != "BRL" else "R$"
             var_dia = info.get("regularMarketChangePercent", 0) or 0
-            var_dia_str = f"{var_dia:.2f}%"
 
             col1, col2, col3, col4, col5, col6 = st.columns(6)
-            col1.metric("Preço Atual", f"{prefixo} {preco_atual:.2f}", var_dia_str)
+            col1.metric("Preço Atual", f"{prefixo} {preco_atual:.2f}", f"{var_dia:.2f}%")
             col2.metric("Dividend Yield", f"{m['dy']:.2f}%")
             col3.metric("P/VP", f"{m['pvp']:.2f}" if m["pvp"] > 0 else "N/D")
             col4.metric("P/L", f"{m['pl']:.2f}" if m["pl"] > 0 else "N/D")
             col5.metric("ROE", f"{m['roe']:.2f}%" if m["roe"] != 0 else "N/D")
             col6.metric("Beta", f"{m['beta']:.2f}" if m["beta"] != 0 else "N/D")
 
-            # Segunda linha de métricas
-            col7, col8, col9, col10 = st.columns(4)
-            col7.metric("Mín. 52 sem.", f"{prefixo} {m['52w_low']:.2f}" if m["52w_low"] > 0 else "N/D")
-            col8.metric("Máx. 52 sem.", f"{prefixo} {m['52w_high']:.2f}" if m["52w_high"] > 0 else "N/D")
-            col9.metric("Market Cap", formatar_market_cap(m["market_cap"]))
-            col10.metric("Último Dividendo", f"{prefixo} {m['ultimo_div']:.4f}" if m["ultimo_div"] > 0 else "N/D")
-
             st.markdown("---")
 
-            # Abas de conteúdo
-            tab1, tab2, tab3, tab4 = st.tabs(["📈 Histórico de Preços", "💰 Dividendos", "🎯 Score Detalhado", "📖 Sobre"])
+            tab1, tab2, tab3, tab4 = st.tabs(["📈 Histórico", "💰 Dividendos", "🎯 Score", "📖 Sobre"])
 
             with tab1:
-                periodo = st.select_slider(
-                    "Período:",
-                    options=["1mo", "3mo", "6mo", "1y", "2y", "5y"],
-                    value="1y",
-                    label_visibility="collapsed"
+                fig = go.Figure()
+                fig.add_trace(go.Candlestick(
+                    x=hist.index,
+                    open=hist["Open"],
+                    high=hist["High"],
+                    low=hist["Low"],
+                    close=hist["Close"],
+                    name=ticker_confirmado,
+                    increasing_line_color="#00d4aa",
+                    decreasing_line_color="#ff6b6b"
+                ))
+                fig.update_layout(
+                    template="plotly_dark",
+                    height=420,
+                    xaxis_rangeslider_visible=False,
+                    margin=dict(l=0, r=0, t=20, b=0)
                 )
-                _, hist_p, _, _ = buscar_ativo(ticker_limpo)
-                if hist_p is not None and not hist_p.empty:
-                    fig = go.Figure()
-                    fig.add_trace(go.Candlestick(
-                        x=hist_p.index,
-                        open=hist_p["Open"],
-                        high=hist_p["High"],
-                        low=hist_p["Low"],
-                        close=hist_p["Close"],
-                        name=ticker_confirmado,
-                        increasing_line_color="#00d4aa",
-                        decreasing_line_color="#ff6b6b"
-                    ))
-                    # Médias móveis
-                    if len(hist_p) >= 50:
-                        hist_p["MM50"] = hist_p["Close"].rolling(50).mean()
-                        fig.add_trace(go.Scatter(x=hist_p.index, y=hist_p["MM50"], name="MM50", line=dict(color="#4da6ff", width=1.5)))
-                    if len(hist_p) >= 200:
-                        hist_p["MM200"] = hist_p["Close"].rolling(200).mean()
-                        fig.add_trace(go.Scatter(x=hist_p.index, y=hist_p["MM200"], name="MM200", line=dict(color="#f0c040", width=1.5)))
-
-                    fig.update_layout(
-                        template="plotly_dark",
-                        height=420,
-                        xaxis_rangeslider_visible=False,
-                        margin=dict(l=0, r=0, t=20, b=0),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02)
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
 
             with tab2:
                 if divs is not None and len(divs) > 0:
@@ -446,58 +517,25 @@ if "Analisar" in pagina:
                         divs_df.tail(24),
                         x="Data", y="Dividendo (R$)",
                         color_discrete_sequence=["#00d4aa"],
-                        template="plotly_dark",
-                        title="Histórico de Dividendos (últimos 24 pagamentos)"
+                        template="plotly_dark"
                     )
-                    fig_div.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0))
+                    fig_div.update_layout(height=350, margin=dict(l=0, r=0, t=20, b=0))
                     st.plotly_chart(fig_div, use_container_width=True)
-
-                    total_12m = divs[divs.index >= (pd.Timestamp.now(tz=divs.index.tz) - pd.DateOffset(months=12))].sum()
-                    col_d1, col_d2, col_d3 = st.columns(3)
-                    col_d1.metric("Total pago (12 meses)", f"R$ {total_12m:.4f}")
-                    col_d2.metric("Último pagamento", f"R$ {divs.iloc[-1]:.4f}")
-                    col_d3.metric("Nº pagamentos (12m)", len(divs[divs.index >= (pd.Timestamp.now(tz=divs.index.tz) - pd.DateOffset(months=12))]))
 
                     st.dataframe(divs_df.tail(24).sort_values("Data", ascending=False), use_container_width=True, hide_index=True)
                 else:
-                    st.info("Nenhum dividendo encontrado para este ativo.")
+                    st.info("Nenhum dividendo encontrado.")
 
             with tab3:
                 st.markdown(f"### Score: **{score}/10**")
                 for desc, pts in detalhes_score:
                     st.markdown(f"- {desc} `{pts}`")
 
-                # Gráfico radar do score
-                categorias = ["DY", "P/VP", "ROE/FII", "P/L", "Geral"]
-                valores = [
-                    min(m["dy"] / 12 * 10, 10),
-                    max(0, 10 - abs(m["pvp"] - 1) * 5) if m["pvp"] > 0 else 0,
-                    min(m["roe"] / 25 * 10, 10) if m["roe"] > 0 else 5,
-                    max(0, 10 - m["pl"] / 3) if 0 < m["pl"] < 30 else 3,
-                    score
-                ]
-                fig_radar = go.Figure(go.Scatterpolar(
-                    r=valores + [valores[0]],
-                    theta=categorias + [categorias[0]],
-                    fill="toself",
-                    fillcolor="rgba(0, 212, 170, 0.2)",
-                    line=dict(color="#00d4aa")
-                ))
-                fig_radar.update_layout(
-                    polar=dict(radialaxis=dict(visible=True, range=[0, 10])),
-                    template="plotly_dark",
-                    height=350,
-                    margin=dict(l=40, r=40, t=20, b=20)
-                )
-                st.plotly_chart(fig_radar, use_container_width=True)
-
             with tab4:
                 st.markdown(f"**Setor:** {m['setor']}")
                 st.markdown(f"**Moeda:** {m['moeda']}")
-                st.markdown(f"**Tipo:** {m['quote_type']}")
                 st.info(m["resumo"])
 
-            # Adicionar à carteira
             st.markdown("---")
             st.markdown("### ➕ Adicionar à Carteira")
             col_a, col_b, col_c = st.columns(3)
@@ -511,39 +549,37 @@ if "Analisar" in pagina:
             if st.button("✅ Adicionar à Carteira", type="primary"):
                 ticker_key = ticker_confirmado
                 if ticker_key in st.session_state.carteira:
-                    # Preço médio ponderado
                     dados_existentes = st.session_state.carteira[ticker_key]
                     qtd_total = dados_existentes["qtd"] + qtd_add
                     pm_novo = (dados_existentes["qtd"] * dados_existentes["preco_medio"] + qtd_add * pm_add) / qtd_total
                     st.session_state.carteira[ticker_key] = {"qtd": qtd_total, "preco_medio": pm_novo, "tipo": tipo_add}
-                    st.success(f"✅ Posição de **{ticker_key}** atualizada! Preço médio: R$ {pm_novo:.2f}")
+                    st.success(f"✅ Posição de **{ticker_key}** atualizada!")
                 else:
                     st.session_state.carteira[ticker_key] = {"qtd": qtd_add, "preco_medio": pm_add, "tipo": tipo_add}
                     st.success(f"✅ **{ticker_key}** adicionado à carteira!")
 
         elif busca_texto:
-            st.error(f"❌ Ativo **'{ticker_limpo}'** não encontrado. Verifique o ticker e tente novamente.")
+            st.error(f"❌ Ativo **'{ticker_limpo}'** não encontrado.")
 
 
 # ==============================
-# PÁGINA 2: MINHA CARTEIRA
+# PÁGINA 3: MINHA CARTEIRA
 # ==============================
 elif "Carteira" in pagina:
-    st.markdown("<h1 class='titulo-principal'>📊 Minha Carteira</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='titulo-principal'>💼 Minha Carteira</h1>", unsafe_allow_html=True)
     st.markdown("<p class='subtitulo'>Acompanhe a performance dos seus investimentos</p>", unsafe_allow_html=True)
     st.markdown("---")
 
     if not st.session_state.carteira:
-        st.info("📭 Sua carteira está vazia. Vá para **Analisar Ativo** e adicione seus investimentos.")
+        st.info("📭 Sua carteira está vazia.")
     else:
-        with st.spinner("Atualizando cotações da carteira..."):
+        with st.spinner("Atualizando cotações..."):
             df_carteira, total_investido, total_atual = calcular_rentabilidade_carteira()
 
         if not df_carteira.empty:
             rentabilidade_total = ((total_atual - total_investido) / total_investido * 100) if total_investido > 0 else 0
             lucro_prejuizo = total_atual - total_investido
 
-            # Resumo geral
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Total Investido", f"R$ {total_investido:,.2f}")
             col2.metric("Valor Atual", f"R$ {total_atual:,.2f}", f"{rentabilidade_total:+.2f}%")
@@ -552,7 +588,6 @@ elif "Carteira" in pagina:
 
             st.markdown("---")
 
-            # Tabela da carteira
             st.markdown("### 📋 Posições")
             df_display = df_carteira.copy()
             df_display["Rentabilidade (%)"] = df_display["Rentabilidade (%)"].apply(
@@ -562,7 +597,6 @@ elif "Carteira" in pagina:
 
             st.markdown("---")
 
-            # Gráficos
             col_g1, col_g2 = st.columns(2)
 
             with col_g1:
@@ -595,24 +629,9 @@ elif "Carteira" in pagina:
                 )
                 st.plotly_chart(fig_bar, use_container_width=True)
 
-            # Distribuição por tipo
-            if "Tipo" in df_carteira.columns:
-                st.markdown("#### Distribuição por Tipo de Ativo")
-                df_tipo = df_carteira.groupby("Tipo")["Valor Atual (R$)"].sum().reset_index()
-                fig_tipo = px.pie(
-                    df_tipo,
-                    values="Valor Atual (R$)",
-                    names="Tipo",
-                    color_discrete_sequence=["#00d4aa", "#4da6ff", "#f0c040", "#c080ff"],
-                    template="plotly_dark"
-                )
-                fig_tipo.update_layout(height=280, margin=dict(l=0, r=0, t=20, b=0))
-                st.plotly_chart(fig_tipo, use_container_width=True)
-
             st.markdown("---")
 
-            # Gerenciar posições
-            st.markdown("### 🗑️ Remover Ativo da Carteira")
+            st.markdown("### 🗑️ Remover Ativo")
             ticker_remover = st.selectbox(
                 "Selecione o ativo para remover:",
                 list(st.session_state.carteira.keys()),
@@ -620,12 +639,101 @@ elif "Carteira" in pagina:
             )
             if st.button("🗑️ Remover", type="secondary"):
                 del st.session_state.carteira[ticker_remover]
-                st.success(f"✅ **{ticker_remover}** removido da carteira.")
+                st.success(f"✅ **{ticker_remover}** removido.")
                 st.rerun()
 
 
 # ==============================
-# PÁGINA 3: EXPLORAR MERCADO
+# PÁGINA 4: CALENDÁRIO DE DIVIDENDOS
+# ==============================
+elif "Dividendos" in pagina:
+    st.markdown("<h1 class='titulo-principal'>📅 Calendário de Dividendos</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='subtitulo'>Próximos pagamentos e projeções</p>", unsafe_allow_html=True)
+    st.markdown("---")
+
+    if not st.session_state.carteira:
+        st.info("📭 Adicione ativos à carteira para ver o calendário de dividendos.")
+    else:
+        df_divs = calcular_dividendos_futuros()
+
+        if not df_divs.empty:
+            st.markdown("### 💰 Projeção de Dividendos")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Mensal Estimado", f"R$ {df_divs['Projeção Mensal (R$)'].sum():,.2f}")
+            col2.metric("Total Anual Estimado", f"R$ {df_divs['Projeção Anual (R$)'].sum():,.2f}")
+            col3.metric("Ativos com Dividendos", len(df_divs))
+
+            st.markdown("---")
+
+            st.markdown("### 📊 Detalhes por Ativo")
+            st.dataframe(df_divs, use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+
+            fig_div_proj = px.bar(
+                df_divs,
+                x="Ticker",
+                y="Projeção Anual (R$)",
+                color_discrete_sequence=["#00d4aa"],
+                template="plotly_dark",
+                title="Projeção Anual de Dividendos por Ativo"
+            )
+            fig_div_proj.update_layout(height=350, margin=dict(l=0, r=0, t=40, b=0))
+            st.plotly_chart(fig_div_proj, use_container_width=True)
+        else:
+            st.warning("Nenhum ativo com histórico de dividendos encontrado.")
+
+
+# ==============================
+# PÁGINA 5: METAS
+# ==============================
+elif "Metas" in pagina:
+    st.markdown("<h1 class='titulo-principal'>🎯 Metas de Investimento</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='subtitulo'>Defina e acompanhe seus objetivos</p>", unsafe_allow_html=True)
+    st.markdown("---")
+
+    col_add, col_view = st.columns([1, 1])
+
+    with col_add:
+        st.markdown("### ➕ Criar Nova Meta")
+        nome_meta = st.text_input("Nome da meta", placeholder="Ex: Fundo de Emergência")
+        valor_meta = st.number_input("Valor alvo (R$)", min_value=100.0, value=10000.0, step=100.0)
+        data_meta = st.date_input("Data alvo")
+
+        if st.button("✅ Criar Meta", type="primary"):
+            meta_id = f"{nome_meta}_{datetime.now().timestamp()}"
+            st.session_state.metas[meta_id] = {
+                "nome": nome_meta,
+                "valor": valor_meta,
+                "data": str(data_meta),
+                "criada_em": datetime.now().isoformat()
+            }
+            st.success(f"✅ Meta '{nome_meta}' criada!")
+            st.rerun()
+
+    with col_view:
+        st.markdown("### 📊 Suas Metas")
+        if st.session_state.metas:
+            _, total_investido, total_atual = calcular_rentabilidade_carteira()
+
+            for meta_id, meta in st.session_state.metas.items():
+                progresso = (total_atual / meta["valor"]) * 100 if meta["valor"] > 0 else 0
+                progresso = min(progresso, 100)
+
+                st.markdown(f"**{meta['nome']}**")
+                st.progress(progresso / 100, f"{progresso:.1f}% de R$ {meta['valor']:,.2f}")
+                st.caption(f"Alvo: {meta['data']}")
+
+                if st.button(f"🗑️ Remover", key=meta_id):
+                    del st.session_state.metas[meta_id]
+                    st.success("Meta removida!")
+                    st.rerun()
+        else:
+            st.info("Nenhuma meta criada ainda.")
+
+
+# ==============================
+# PÁGINA 6: EXPLORAR MERCADO
 # ==============================
 elif "Explorar" in pagina:
     st.markdown("<h1 class='titulo-principal'>🔎 Explorar Mercado</h1>", unsafe_allow_html=True)
@@ -640,7 +748,6 @@ elif "Explorar" in pagina:
     else:
         lista = st.session_state.lista_fiis
 
-    # Filtrar por busca
     if busca_mercado:
         lista_filtrada = [
             a for a in lista
@@ -649,7 +756,6 @@ elif "Explorar" in pagina:
     else:
         lista_filtrada = lista
 
-    # Filtro por setor
     setores = sorted(set(a["setor"] for a in lista if a["setor"]))
     setor_selecionado = st.selectbox("Filtrar por setor:", ["Todos"] + setores)
     if setor_selecionado != "Todos":
@@ -657,17 +763,16 @@ elif "Explorar" in pagina:
 
     st.markdown(f"**{len(lista_filtrada)} ativos encontrados**")
 
-    # Exibir em tabela
     if lista_filtrada:
         df_lista = pd.DataFrame(lista_filtrada)
         df_lista.columns = ["Ticker", "Nome", "Setor", "Tipo"]
         st.dataframe(df_lista, use_container_width=True, hide_index=True, height=500)
     else:
-        st.warning("Nenhum ativo encontrado com os filtros aplicados.")
+        st.warning("Nenhum ativo encontrado.")
 
 
 # ==============================
-# PÁGINA 4: COMPARAR ATIVOS
+# PÁGINA 7: COMPARAR ATIVOS
 # ==============================
 elif "Comparar" in pagina:
     st.markdown("<h1 class='titulo-principal'>📋 Comparar Ativos</h1>", unsafe_allow_html=True)
@@ -684,7 +789,7 @@ elif "Comparar" in pagina:
     )
 
     if tickers_comp:
-        with st.spinner("Buscando dados para comparação..."):
+        with st.spinner("Buscando dados..."):
             dados_comp = []
             hists_comp = {}
             for t in tickers_comp:
@@ -701,8 +806,6 @@ elif "Comparar" in pagina:
                         "P/VP": m["pvp"],
                         "P/L": m["pl"] if m["pl"] > 0 else "N/D",
                         "ROE (%)": m["roe"] if m["roe"] != 0 else "N/D",
-                        "Beta": m["beta"] if m["beta"] != 0 else "N/D",
-                        "Market Cap": formatar_market_cap(m["market_cap"]),
                         "Score": f"{score}/10",
                     })
                     hists_comp[t] = hist
@@ -734,19 +837,5 @@ elif "Comparar" in pagina:
                 legend=dict(orientation="h", yanchor="bottom", y=1.02)
             )
             st.plotly_chart(fig_comp, use_container_width=True)
-
-            # Comparação de DY
-            st.markdown("### 💰 Comparação de Dividend Yield")
-            df_dy = pd.DataFrame([{"Ticker": d["Ticker"], "DY (%)": d["DY (%)"]} for d in dados_comp])
-            fig_dy = px.bar(
-                df_dy, x="Ticker", y="DY (%)",
-                color="DY (%)",
-                color_continuous_scale="teal",
-                template="plotly_dark",
-                text="DY (%)"
-            )
-            fig_dy.update_layout(height=300, margin=dict(l=0, r=0, t=20, b=0))
-            st.plotly_chart(fig_dy, use_container_width=True)
     else:
-        st.info("Selecione pelo menos um ativo para iniciar a comparação.")
-
+        st.info("Selecione pelo menos um ativo para comparar.")

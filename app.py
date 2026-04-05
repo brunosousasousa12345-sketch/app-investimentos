@@ -123,6 +123,58 @@ def remover_ativo(usuario, ticker):
     conn.commit()
 
 # ==============================
+# FUNÇÕES DE CLASSIFICAÇÃO DE FIIs
+# ==============================
+def tipo_fii(nome):
+    """Classifica o tipo de FII baseado no nome."""
+    nome = nome.lower()
+    
+    if "log" in nome:
+        return "Logística"
+    elif "shop" in nome:
+        return "Shopping"
+    elif "receb" in nome or "cri" in nome:
+        return "Papel"
+    elif "office" in nome or "corp" in nome:
+        return "Escritório"
+    else:
+        return "Outros"
+
+def renda_mensal_estimada(carteira_fiis):
+    """Calcula renda mensal estimada de uma carteira de FIIs."""
+    total_renda = 0
+    for ticker in carteira_fiis:
+        dados = analisar_ativo(ticker)
+        if "Erro" not in dados:
+            # Simulação: DY anual / 12 meses * 1000 reais investidos
+            renda_mensal = (dados["DY"] / 100 / 12) * 1000
+            total_renda += renda_mensal
+    
+    return round(total_renda, 2)
+
+def montar_carteira_fii(perfil):
+    """Monta carteira específica de FIIs por perfil."""
+    ativos = ["HGLG11", "MXRF11", "XPML11", "VILG11", "KNRI11", "KNCR11", "KNIP11"]
+    carteira = []
+    
+    for ticker in ativos:
+        dados = analisar_ativo(ticker)
+        if "Erro" not in dados:
+            if perfil == "Conservador":
+                if dados["DY"] > 7 and tipo_fii(dados["Nome"]) == "Papel":
+                    carteira.append(ticker)
+            
+            elif perfil == "Moderado":
+                if dados["DY"] > 6:
+                    carteira.append(ticker)
+            
+            elif perfil == "Agressivo":
+                if dados["Potencial"] > 15:
+                    carteira.append(ticker)
+    
+    return carteira[:5]
+
+# ==============================
 # FUNÇÕES DE ANÁLISE
 # ==============================
 @st.cache_data(ttl=600)
@@ -173,7 +225,8 @@ def analisar_ativo(ticker):
             "Preço Justo": round(pj, 2),
             "Potencial": round(potencial, 2),
             "Status": status,
-            "Score": score
+            "Score": score,
+            "Tipo": tipo_fii(info.get("longName", ""))
         }
     except Exception as e:
         return {"Erro": str(e)}
@@ -585,7 +638,86 @@ else:
             st.session_state.usuario = None
             st.rerun()
 
-st.divider()
+
+    # ==============================
+    # PÁGINA: FIIs
+    # ==============================
+    elif pagina == "🏢 FIIs":
+        st.header("🏢 Análise de Fundos Imobiliários (FIIs)")
+        
+        ticker = st.text_input("Digite o ticker do FII (ex: MXRF11):")
+        
+        if ticker:
+            dados = analisar_ativo(ticker)
+            
+            if "Erro" not in dados:
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("💰 Preço", f"R$ {dados['Preço']:.2f}")
+                with col2:
+                    st.metric("📊 DY", f"{dados['DY']:.2f}%")
+                with col3:
+                    st.metric("🏢 Tipo", dados['Tipo'])
+                
+                st.divider()
+                
+                st.markdown(f"""
+                <div class="card">
+                    <b>Nome:</b> {dados['Nome']}<br>
+                    <b>Tipo:</b> {dados['Tipo']}<br>
+                    <b>Setor:</b> {dados['Setor']}<br>
+                    <b>P/VP:</b> {dados['PVP']:.2f}<br>
+                    <b>Potencial:</b> {dados['Potencial']:.2f}%
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.divider()
+                
+                if st.button("➕ Adicionar à Carteira"):
+                    qtd = st.number_input("Quantidade:", 1)
+                    preco_medio = st.number_input("Preço Médio:", dados['Preço'])
+                    
+                    if st.button("✅ Confirmar"):
+                        adicionar_ativo(st.session_state.usuario, ticker, qtd, preco_medio)
+                        st.success("✅ FII adicionado à carteira!")
+    
+    # ==============================
+    # PÁGINA: MONTAR CARTEIRA FII
+    # ==============================
+    elif pagina == "🎯 Montar Carteira FII":
+        st.header("🎯 Montar Carteira de FIIs")
+        
+        perfil = st.selectbox("Seu Perfil de Investidor:", 
+                             ["Conservador", "Moderado", "Agressivo"])
+        
+        if st.button("🤖 Gerar Carteira FII"):
+            with st.spinner("Analisando FIIs..."):
+                carteira_fii = montar_carteira_fii(perfil)
+                
+                if carteira_fii:
+                    st.subheader("📊 Carteira de FIIs Sugerida")
+                    
+                    for fii in carteira_fii:
+                        dados = analisar_ativo(fii)
+                        if "Erro" not in dados:
+                            st.markdown(f"""
+                            <div class="card">
+                                ✅ <b>{fii}</b> - {dados['Nome']}<br>
+                                🏢 Tipo: {dados['Tipo']} | DY: {dados['DY']}%
+                            </div>
+                            """, unsafe_allow_html=True)
+                    
+                    st.divider()
+                    
+                    renda = renda_mensal_estimada(carteira_fii)
+                    st.metric("💰 Renda Mensal Estimada", f"R$ {renda:.2f}", 
+                             "(Simulação com R$ 1.000 por FII)")
+                else:
+                    st.warning("⚠️ Nenhum FII encontrado para este perfil.")
+
+
+    st.divider()
 st.markdown("""
 <div style="text-align: center; color: #888; font-size: 12px; margin-top: 20px;">
     <p>Investidor PRO v4.0 © 2026 · Com Autenticação e IA</p>

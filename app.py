@@ -53,6 +53,109 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
+# ==============================
+# BASE INTELIGENTE (Se não existir)
+# ==============================
+ativos_base_adicional = {
+    "petrobras": "PETR4",
+    "vale": "VALE3",
+    "itau": "ITUB4",
+    "itaú": "ITUB4",
+    "banco do brasil": "BBAS3",
+    "bradesco": "BBDC4",
+    "weg": "WEGE3",
+    "ambev": "ABEV3",
+    "mxrf": "MXRF11",
+    "hglg": "HGLG11",
+    "xplg": "XPLG11",
+    "apple": "AAPL",
+    "microsoft": "MSFT",
+    "google": "GOOGL",
+    "amazon": "AMZN",
+    "tesla": "TSLA"
+}
+
+def buscar_ticker(nome):
+    """Busca ticker por nome ou código."""
+    nome = nome.lower().strip()
+    
+    if len(nome) <= 6 and nome.isalnum():
+        return nome.upper()
+    
+    # Combinar com ativos_base_adicional
+    for chave in ativos_base_adicional:
+        if nome in chave:
+            return ativos_base_adicional[chave]
+    
+    return None
+
+@st.cache_data(ttl=1800)
+def get_data(ticker):
+    """Obtém dados históricos do ticker."""
+    ticker = ticker.upper()
+    
+    if "." not in ticker and len(ticker) <= 6:
+        ticker += ".SA"
+    
+    acao = yf.Ticker(ticker)
+    
+    try:
+        hist = acao.history(period="3mo")
+        if hist.empty:
+            return None, None
+        
+        try:
+            info = acao.info
+        except:
+            info = {}
+        
+        return info, hist
+    except:
+        return None, None
+
+@st.cache_data(ttl=1800)
+def calcular_indicadores(info, preco, ticker):
+    """Calcula indicadores financeiros."""
+    try:
+        dy = (info.get("dividendYield") or 0) * 100
+        roe = (info.get("returnOnEquity") or 0) * 100
+        pl = info.get("trailingPE") or 0
+        pvp = preco / (info.get("bookValue") or 1)
+        divida = info.get("debtToEquity") or 0
+        setor = info.get("sector") or "N/A"
+        nome = info.get("longName") or ticker
+    except:
+        dy, roe, pl, pvp, divida, setor, nome = 0,0,0,0,0,"N/A",ticker
+    
+    return {
+        "DY": dy,
+        "ROE": roe,
+        "P/L": pl,
+        "P/VP": pvp,
+        "Dívida": divida,
+        "Setor": setor,
+        "Nome": nome
+    }
+
+def score_ativo(ind):
+    """Calcula score do ativo."""
+    score = 0
+    if ind["DY"] > 6: score += 2
+    if ind["ROE"] > 15: score += 2
+    if ind["P/L"] > 0 and ind["P/L"] < 15: score += 2
+    if ind["P/VP"] < 1.5: score += 2
+    if ind["Dívida"] < 100: score += 2
+    return score
+
+def recomendacao(score):
+    """Gera recomendação baseado no score."""
+    if score >= 8: return "🟢 FORTE COMPRA"
+    elif score >= 6: return "🟡 BOA"
+    elif score >= 4: return "⚠️ NEUTRO"
+    else: return "🔴 EVITAR"
+
+
 # ==============================
 # BANCO DE DADOS
 # ==============================
@@ -717,6 +820,52 @@ else:
                     st.warning("⚠️ Nenhum FII encontrado para este perfil.")
 
 
+    
+    # ==============================
+    # PÁGINA: ALERTAS
+    # ==============================
+    elif pagina == "🔔 Alertas":
+        st.header("🔔 Alertas de Oportunidades")
+        
+        st.subheader("Verificar Alertas da Carteira")
+        
+        if st.button("🔍 Gerar Alertas"):
+            carteira_tickers = []
+            
+            # Obter tickers da carteira do usuário
+            cursor.execute("SELECT DISTINCT ticker FROM carteira WHERE user=?", (st.session_state.usuario,))
+            resultados = cursor.fetchall()
+            
+            if resultados:
+                carteira_tickers = [r[0] for r in resultados]
+                
+                with st.spinner("Analisando carteira..."):
+                    alertas = gerar_alertas_carteira(carteira_tickers)
+                
+                if alertas:
+                    st.subheader("📢 Alertas Encontrados")
+                    for alerta in alertas:
+                        st.info(alerta)
+                else:
+                    st.warning("Nenhum alerta no momento.")
+            else:
+                st.warning("Adicione ativos à sua carteira para receber alertas.")
+        
+        st.divider()
+        
+        st.subheader("Verificar Alerta de um Ativo Específico")
+        
+        ticker_alerta = st.text_input("Digite o ticker:")
+        
+        if ticker_alerta:
+            alerta = alerta_oportunidade(ticker_alerta.upper())
+            
+            if alerta:
+                st.success(alerta)
+            else:
+                st.info(f"✅ {ticker_alerta.upper()} não tem alertas no momento.")
+
+
     st.divider()
 st.markdown("""
 <div style="text-align: center; color: #888; font-size: 12px; margin-top: 20px;">
@@ -724,3 +873,43 @@ st.markdown("""
     <p>⚠️ Apenas para fins educacionais</p>
 </div>
 """, unsafe_allow_html=True)
+
+# ==============================
+# 🔔 SISTEMA DE ALERTAS
+# ==============================
+def alerta_oportunidade(ticker):
+    """Detecta oportunidades de compra baseado em análise."""
+    dados = analisar_ativo(ticker)
+    
+    if "Erro" in dados:
+        return None
+    
+    # Oportunidade forte: Alto potencial + bom DY
+    if dados["Potencial"] > 20 and dados["DY"] > 5:
+        return f"🔥 OPORTUNIDADE em {ticker} (Potencial {dados['Potencial']}%)"
+    
+    # Ativo barato: P/VP baixo
+    elif dados["PVP"] < 1:
+        return f"💎 {ticker} pode estar barato (P/VP: {dados['PVP']:.2f})"
+    
+    # Bom rendimento: DY alto
+    elif dados["DY"] > 8:
+        return f"💰 {ticker} com bom rendimento (DY: {dados['DY']:.2f}%)"
+    
+    # Potencial de crescimento
+    elif dados["Potencial"] > 15:
+        return f"📈 {ticker} com potencial de crescimento ({dados['Potencial']}%)"
+    
+    return None
+
+def gerar_alertas_carteira(carteira):
+    """Gera alertas para todos os ativos da carteira."""
+    alertas = []
+    
+    for ticker in carteira:
+        alerta = alerta_oportunidade(ticker)
+        if alerta:
+            alertas.append(alerta)
+    
+    return alertas
+

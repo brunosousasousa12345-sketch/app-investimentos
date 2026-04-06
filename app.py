@@ -57,7 +57,11 @@ st.markdown("""
 # ==============================
 # BASE INTELIGENTE (Se não existir)
 # ==============================
-ativos_base_adicional = {
+# ==============================
+# BASE INTELIGENTE EXPANDIDA
+# ==============================
+ativos_base_expandido = {
+    # AÇÕES BRASILEIRAS - BLUE CHIPS
     "petrobras": "PETR4",
     "vale": "VALE3",
     "itau": "ITUB4",
@@ -66,14 +70,182 @@ ativos_base_adicional = {
     "bradesco": "BBDC4",
     "weg": "WEGE3",
     "ambev": "ABEV3",
+    "natura": "NATU3",
+    "magazine": "MGLU3",
+    "b2w": "B2W3",
+    "jbs": "JBSS3",
+    "klabin": "KLBN11",
+    "copel": "CPLE6",
+    "eletrobras": "ELET6",
+    "cemig": "CMIG4",
+    "sabesp": "SBSP3",
+    "taesa": "TAEE11",
+    "terna": "TRNO11",
+    "engie": "EGIE3",
+    "enel": "ENEL3",
+    "neoenergia": "NEOE3",
+    "ultrapar": "UGPA3",
+    "embraer": "EMBR3",
+    "gerdau": "GGBR4",
+    "usiminas": "USIM5",
+    "suzano": "SUZB3",
+    "pulp": "PULP3",
+    "arezzo": "ARZZ3",
+    "hering": "HGTX3",
+    "lojas americanas": "LAME4",
+    "via": "VIIA3",
+    "cogna": "COGN3",
+    "anima": "ANIM3",
+    "positivo": "POSI3",
+    "azul": "AZUL4",
+    "gol": "GOLL4",
+    "inframerica": "INFR3",
+    "ccro": "CCRO3",
+    "cyre": "CYRE3",
+    "even": "EVEN3",
+    "mrv": "MRV3",
+    "pdtc": "PDTC3",
+    "plas": "PLAS3",
+    "romi": "ROMI3",
+    "slce": "SLCE3",
+    "smls": "SMLS3",
+    "trad": "TRAD3",
+    "trpl": "TRPL3",
+    "tris": "TRIS3",
+    "tupy": "TUPY3",
+    "usim": "USIM5",
+    "vale": "VALE3",
+    "vbbr": "VBBR3",
+    "verd": "VERD3",
+    "viapar": "VIAS3",
+    "wege": "WEGE3",
+    "whrl": "WHRL3",
+    "wlm": "WLM3",
+    "xpbr": "XPBR3",
+    "yduq": "YDUQ3",
+    "zamp": "ZAMP3",
+    
+    # FUNDOS IMOBILIÁRIOS (FIIs)
     "mxrf": "MXRF11",
     "hglg": "HGLG11",
     "xplg": "XPLG11",
+    "vilg": "VILG11",
+    "knri": "KNRI11",
+    "kncr": "KNCR11",
+    "knip": "KNIP11",
+    "ifix": "IFIX11",
+    "xpml": "XPML11",
+    "rbr": "RBRL3",
+    "rbrp": "RBRP11",
+    "rbry": "RBRY11",
+    "rbrs": "RBRS11",
+    "rbrt": "RBRT11",
+    "rbru": "RBRU11",
+    "rbrx": "RBRX11",
+    "rbrz": "RBRZ11",
+    "rbra": "RBRA11",
+    "rbrb": "RBRB11",
+    "rbrc": "RBRC11",
+    "rbrd": "RBRD11",
+    "rbre": "RBRE11",
+    "rbrf": "RBRF11",
+    "rbrg": "RBRG11",
+    "rbrh": "RBRH11",
+    "rbri": "RBRI11",
+    "rbrj": "RBRJ11",
+    "rbrk": "RBRK11",
+    
+    # AÇÕES INTERNACIONAIS - EUA
     "apple": "AAPL",
     "microsoft": "MSFT",
     "google": "GOOGL",
     "amazon": "AMZN",
-    "tesla": "TSLA"
+    "tesla": "TSLA",
+    "nvidia": "NVDA",
+    "meta": "META",
+    "netflix": "NFLX",
+    "coca-cola": "KO",
+    "pepsi": "PEP",
+    "mcdonalds": "MCD",
+    "walmart": "WMT",
+    "target": "TGT",
+    "costco": "COST",
+    "jp morgan": "JPM",
+    "bank of america": "BAC",
+    "wells fargo": "WFC",
+    "goldman sachs": "GS",
+    "morgan stanley": "MS",
+    "citigroup": "C",
+    "pfizer": "PFE",
+    "moderna": "MRNA",
+    "johnson": "JNJ",
+    "merck": "MRK",
+    "abbvie": "ABBV",
+    "exxon": "XOM",
+    "chevron": "CVX",
+    "conocophillips": "COP",
+    "enbridge": "ENB",
+    "tc energy": "TRP",
+    
+    # AÇÕES EUROPA - IBEX (ESPANHA)
+    "bbva": "BBVA",
+    "santander": "SAN",
+    "caixabank": "CABK",
+    "telefonica": "TEF",
+    "repsol": "REP",
+    "inditex": "ITX",
+    "amadeus": "AMS",
+    "acciona": "ANA",
+    "acs": "ACS",
+    "ferrovial": "FER",
+    
+    # AÇÕES EUROPA - DAX (ALEMANHA)
+    "siemens": "SIE",
+    "deutsche telekom": "DTE",
+    "allianz": "ALV",
+    "bmw": "BMW",
+    "daimler": "DAI",
+    "volkswagen": "VOW",
+    "basf": "BAS",
+    "bayer": "BAYN",
+    "adidas": "ADS",
+    "puma": "PUM",
+    "sap": "SAP",
+    "infineon": "IFX",
+    "merck": "MRK",
+    "fresenius": "FRE",
+    "henkel": "HEN3",
+    
+    # AÇÕES EUROPA - CAC40 (FRANÇA)
+    "total": "TTEF",
+    "sanofi": "SNPF",
+    "lvmh": "LVMHF",
+    "loreal": "LRLCY",
+    "danone": "DANOY",
+    "airbus": "EADSY",
+    "airfrance": "AFLYY",
+    "accor": "ACCYY",
+    "renault": "RNLSY",
+    "psa": "PSAAY",
+    
+    # AÇÕES EUROPA - FTSE (REINO UNIDO)
+    "hsbc": "HSBC",
+    "barclays": "BCS",
+    "lloyds": "LYG",
+    "astrazeneca": "AZN",
+    "unilever": "UL",
+    "shell": "SHEL",
+    "bp": "BP",
+    "diageo": "DEO",
+    "reckitt": "RCKT",
+    "gsk": "GSK",
+    
+    # CRIPTOMOEDAS
+    "bitcoin": "BTC-USD",
+    "ethereum": "ETH-USD",
+    "cardano": "ADA-USD",
+    "solana": "SOL-USD",
+    "ripple": "XRP-USD",
 }
 
 def buscar_ticker(nome):
@@ -154,6 +326,17 @@ def recomendacao(score):
     elif score >= 6: return "🟡 BOA"
     elif score >= 4: return "⚠️ NEUTRO"
     else: return "🔴 EVITAR"
+
+
+
+# ==============================
+# VALIDAÇÃO DE CRESCIMENTO
+# ==============================
+def validar_crescimento(crescimento, desconto):
+    """Valida se o crescimento é menor que o desconto."""
+    if crescimento >= desconto:
+        crescimento = desconto - 0.01
+    return crescimento
 
 
 # ==============================
